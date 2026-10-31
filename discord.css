@@ -1,0 +1,50 @@
+/* Discord RPC (общий модуль ядра, discord.js): строка состояния в настройках и окно «Discord».
+   .dcline / .dcnote — строка «состояние + кнопка» в карточке; ими пользуются и карточки приложения. */
+.dcline { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.dcnote { flex: 1; min-width: 0; color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dcdot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.25); }
+.dcdot[data-s="on"] { background: #3ba55d; box-shadow: 0 0 8px #3ba55d; }
+.dcdot[data-s="wait"] { background: #faa61a; }
+.dcdot[data-s="badid"] { background: #ed4245; }
+
+.dcmodal { width: min(480px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.dcmodal [hidden] { display: none !important; }
+
+.dcacc { display: flex; align-items: center; gap: 12px; }
+.dcava { position: relative; flex: none; width: 44px; height: 44px; border-radius: 50%; background: #5865f2; overflow: hidden; }
+.dcava::before { content: ""; position: absolute; inset: 11px; background: #fff; opacity: .9;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20 4.6A19 19 0 0 0 15.4 3l-.6 1.2a17 17 0 0 0-5.6 0L8.6 3A19 19 0 0 0 4 4.6C1.1 9 .3 13.2.7 17.4A19 19 0 0 0 6.4 20l1.2-1.9a12 12 0 0 1-1.9-.9l.5-.4a13.6 13.6 0 0 0 11.6 0l.5.4c-.6.4-1.2.7-1.9.9l1.2 1.9a19 19 0 0 0 5.7-2.6c.5-4.9-.8-9-3.3-12.8zM8.5 14.8c-1.1 0-2-1-2-2.3s.9-2.3 2-2.3 2 1 2 2.3-.9 2.3-2 2.3zm7 0c-1.1 0-2-1-2-2.3s.9-2.3 2-2.3 2 1 2 2.3-.9 2.3-2 2.3z'/%3E%3C/svg%3E") center / contain no-repeat;
+          mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20 4.6A19 19 0 0 0 15.4 3l-.6 1.2a17 17 0 0 0-5.6 0L8.6 3A19 19 0 0 0 4 4.6C1.1 9 .3 13.2.7 17.4A19 19 0 0 0 6.4 20l1.2-1.9a12 12 0 0 1-1.9-.9l.5-.4a13.6 13.6 0 0 0 11.6 0l.5.4c-.6.4-1.2.7-1.9.9l1.2 1.9a19 19 0 0 0 5.7-2.6c.5-4.9-.8-9-3.3-12.8zM8.5 14.8c-1.1 0-2-1-2-2.3s.9-2.3 2-2.3 2 1 2 2.3-.9 2.3-2 2.3zm7 0c-1.1 0-2-1-2-2.3s.9-2.3 2-2.3 2 1 2 2.3-.9 2.3-2 2.3z'/%3E%3C/svg%3E") center / contain no-repeat; }
+.dcava[data-s="off"] { background: rgba(255,255,255,.14); }
+.dcava img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.dcava img:not([src]) { display: none; }
+.dcava::after { content: ""; position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(20,14,42,.95); background: rgba(255,255,255,.35); }
+.dcava[data-s="on"]::after { background: #3ba55d; }
+.dcava[data-s="wait"]::after { background: #faa61a; }
+.dcava[data-s="badid"]::after { background: #ed4245; }
+.dcwho { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dcwho b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dcwho small { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.dcmain { flex: none; }
+
+/* превью: тёмная карточка в духе профиля Discord, одинаковая во всех стилях */
+.dcprev { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 12px; background: #232428; color: #f2f3f5; font-size: 13px; transition: opacity .2s; }
+.dcprev.off { opacity: .4; }
+.dcph { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #b5bac1; }
+.dcprow { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.dcpcov { flex: none; width: 64px; height: 64px; border-radius: 8px; object-fit: cover; background: #111214; }
+.dcptxt { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dcptxt > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dcptxt span { color: #dbdee1; }
+.dcptxt .dcpalb { color: #949ba4; font-size: 12px; }
+.dcbar { display: flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.dcbar small { color: #b5bac1; font-size: 11px; }
+.dctrack { flex: 1; height: 4px; border-radius: 2px; background: #4e5058; overflow: hidden; }
+.dctrack i { display: block; height: 100%; background: #f2f3f5; }
+.dcpbtn { padding: 7px; border-radius: 4px; background: #4e5058; text-align: center; font-weight: 500; }
+.dcempty { margin: 0; color: #949ba4; text-align: center; }
+
+.dcopts { display: flex; flex-direction: column; gap: 10px; transition: opacity .2s; }
+.dcopts.dim { opacity: .5; }
+.dcopts .switch span { font-size: 14px; }
+

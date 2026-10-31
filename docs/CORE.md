@@ -38,6 +38,8 @@ git-подмодулем в `src/core`, поэтому пути ниже — `sr
 | `src/core/queue.js` + `queue.css` | **общий модуль**: панель «Очередь и история» (раздел «Общие модули») |
 | `src/core/archive.js` + `archive.css` | **общий модуль**: Whisper Archive — свои треки вместо версий сервиса, вход, «Сохранить в архив» |
 | `src/core/together.js` + `together.css` | **общий модуль**: «Слушать вместе» — комнаты через сервер Whisper Archive |
+| `src/core/discord.js` + `discord.css` | **общий модуль**: Discord Rich Presence |
+| `src/core/obs.js` + `obs.css` | **общий модуль**: виджет «Сейчас играет» для OBS |
 
 Порядок в `index.html`: `core/whisper-core.js` → `main.js` → `yandex.js` → остальные модули (в том числе `core/archive.js`,
 `core/queue.js`, `core/together.js`; `core/wmt.js` и `core/theme-css.js` — перед `theme.js`).
@@ -194,7 +196,8 @@ Whisper.player.state();    // { track, playing, volume, liked, disliked, rate, m
 Whisper.player.play(); .pause(); .toggle(); .next(); .prev(); .seek(42); .setVolume(0.5); .setRate(1.25); .like(); .dislike();
 Whisper.player.playTrack(track, { at: 12, hold: true, context: "room" });   // включить этот трек вместо очереди; hold — загрузить без звука
 Whisper.player.reload(12, true);   // загрузить текущий трек, который ещё не загружался (восстановлен с прошлого запуска)
-Whisper.player.media();    // { paused, ended, duration (0 — неизвестна), pending, loading, startAt } — для точной синхронизации
+Whisper.player.media();    // { paused, ended, duration (0 — неизвестна), pending, loading, startAt,
+                           //   has, time, rate, buffering, error } — что с самим файлом: синхронизация, «не завис ли звук»
 
 Whisper.queue.list();      // Track[]
 Whisper.queue.index();     // номер играющего, -1 — ничего
@@ -429,6 +432,11 @@ Whisper.ui.define({
 Модули рядом с ядром (`src/core/`), которые работают **только** через `window.Whisper`. Их можно переносить в другое
 приложение как есть.
 
+Оформление модулей опирается на общие классы приложения (`.panel`, `.login.modal`, `.login-box`, `.modalbox`, `.field`,
+`.nav`, `.row`, `.status`, `.switch`, `.chip`, `.lyrow`, `.lyseg`, `.slide`, `.card`, `.list`). У приложения без своих
+таких стилей — `core/base.css` первой таблицей стилей: нейтральное тёмное оформление в `@layer whisper-base` и `:where()`,
+поэтому любое правило приложения главнее. Whisper Yandex его не подключает — у него всё своё.
+
 ### `core/queue.js` + `core/queue.css` — очередь и история прослушивания
 
 Выезжающая панель: «Сейчас играет», «Далее» (убрать, перетащить, «Показать ещё») и «История» по дням. Открывается
@@ -451,7 +459,10 @@ Whisper.ui.define({
 | `decorateRow(li, track, before)` | свои значки в строке (например, «скачан») | — |
 | `icon(name)` | значки `more`, `grip`, `plus` | встроенные `more`, `grip` |
 | `menu(rawTrack, ctx)` | меню «⋯» для пунктов модулей (раздел «Меню трека для общих модулей») | пунктов модулей нет |
-| `settingsCard(card, { section, first })` | встроить карточку настроек модуля (`section`: `integrations`, `playback`, `sound`, `look`, `interface`, `app`) | у модуля нет настроек |
+| `settingsCard(card, { section, first, colbreak })` | встроить карточку настроек модуля (`section`: `integrations`, `playback`, `sound`, `look`, `interface`, `app`; `colbreak` — с неё начинается правый столбец) | у модуля нет настроек |
+| `accentColors()` | `{ accent, accent2 }` текущего стиля строго `#rrggbb` (виджет OBS) | цвета по умолчанию |
+| `obsTheme()` | `{ key, css, settings }` — секции `whisper-obs` текущего стиля; `key` меняется со стилем | виджет без оформления стиля |
+| `rangeFill(input)` | перерисовать заливку ползунка, если приложение рисует её само | — |
 | `secretSaved()` | ключ только что сохранён (предупредить, если хранилище незащищённое) | — |
 
 * **Хранилище:** история лежит в `localStorage` под ключом `<storage>history`, приставку задаёт `Whisper.setApp({ storage })`.
@@ -539,6 +550,41 @@ API для других модулей: `Whisper.modules.archive` — `login(rea
 API: `Whisper.modules.together` — `info()` (`{ code, host, follow }` | `null`), `wantsPlay()`, `take()`, `open()`, `create()`,
 `join(code)`, `leave()`, `suggest(track)`, `rejoin()`, `room()`, `waveBtn()` / `stBtn()` (кнопки бесконечного потока у гостя).
 Старые имена для `main.js` и консоли: `window.roomInfo`, `window.roomWantsPlay`, `window.roomTake`, `window.roomCli`.
+
+### `core/discord.js` + `core/discord.css` — Discord Rich Presence
+
+«Слушает …» в профиле Discord: трек, исполнитель, альбом, обложка, полоска времени (с учётом скорости), кнопка
+«Скачать …». Карточка в настройках (переключатель, состояние подключения, «Настроить…») и окно с превью и параметрами.
+Discord сам находит запущенный клиент и переподключается — это делает Rust.
+
+Что нужно от приложения:
+
+* **Плеер:** `Whisper.player.watch` (сообщения о треке, паузе, перемотке) и `Whisper.player.media()` с полями `has`,
+  `time`, `rate`, `buffering`, `error` — по ним модуль понимает, что звук на самом деле стоит (загрузка, буферизация,
+  ошибка сети), и показывает в Discord паузу, а не бегущее время. Без этих полей модуль работает, но зависание не заметит.
+* **Набор интерфейса:** `settingsCard` (карточка, у Whisper Yandex — правый столбец «Интеграций»). Окно использует общие
+  классы `.login.modal`, `.panel.login-box.modalbox`, `.switch`, `.nav`, `.row`.
+* **Rust:** `rust/discord.rs` (`#[path = "../../src/core/rust/discord.rs"] mod discord;`), команды `discord_config`,
+  `discord_status`, `discord_retry`, `discord_update` и событие `discord-status`. В `whisper_host.rs` — `DISCORD_APP_ID`
+  (своё приложение Discord: его название видно в «Слушает …»), `DISCORD_BUTTON`, `APP_URL`.
+* **Хранилище:** настройки — `<storage>discord` (у Whisper Yandex — `ym_discord`).
+
+### `core/obs.js` + `core/obs.css` — виджет «Сейчас играет» для OBS
+
+Маленький сервер на `127.0.0.1` (Rust) отдаёт страницу виджета для источника «Браузер» в OBS. Карточка в настройках:
+адрес с ключом, вид (как в стиле / карточка / компактный / полоска), прозрачность, «прятать на паузе». Оформление
+виджета под стиль — секции `@@ css whisper-obs` и `@@ settings whisper-obs` темы (`docs/WMT-FORMAT.md`).
+
+Что нужно от приложения:
+
+* **Плеер:** `Whisper.player.watch` + `Whisper.player.state()`; основа стиля — `data-base` на `<html>`.
+* **Набор интерфейса:** `settingsCard`, `accentColors` (цвета `#rrggbb`), `obsTheme` (секции whisper-obs текущего
+  стиля — из `WhisperThemeCss.obsCss(th)`), `rangeFill`, `toast`. Классы карточки: `.switch`, `.slide`, `.chip`,
+  `.lyrow`, `.lyseg`, `.field`, `.nav`, `.status`.
+* **Rust:** `rust/obs.rs` (+ страница `rust/obs/widget.html`, `widget.js`), команды `obs_config`, `obs_state`, `obs_theme`.
+  В `whisper_host.rs` — `OBS_IMG_SRC` (CSP картинок страницы) и `cover_ok(url)` (какие обложки можно отдать виджету).
+  Порты 47821–47826: если первый занят (например, второе приложение Whisper), берётся следующий.
+* **Хранилище:** `<storage>obs` (у Whisper Yandex — `ym_obs`).
 
 ## Движок тем: `core/wmt.js` + `core/theme-css.js`
 
@@ -634,4 +680,5 @@ const obs = WhisperThemeCss.obsCss(th);                              // { css, s
 * ~~движок тем — в ядро~~ — сделано: `core/wmt.js` и `core/theme-css.js`, в `theme.js` осталось только своё для этого приложения;
 * ~~разделить `whisper.rs` на общую часть (архив, комнаты) и часть Яндекса~~ — сделано: `src-tauri/src/whisper/` + `whisper_yandex.rs`;
 * ~~вынести `src/core` в отдельный репозиторий~~ — сделано: whisper-core, подмодуль в `src/core` у каждого приложения;
-* общие модули Discord, OBS, статистика — в ядро рядом с очередью и архивом.
+* ~~Discord и виджет OBS — в ядро~~ — сделано: `core/discord.js`, `core/obs.js`, `rust/discord.rs`, `rust/obs.rs`;
+* статистика прослушиваний — в ядро.

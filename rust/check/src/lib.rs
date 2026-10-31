@@ -5,6 +5,10 @@
 
 #[path = "../../whisper/mod.rs"]
 mod whisper;
+#[path = "../../discord.rs"]
+mod discord;
+#[path = "../../obs.rs"]
+mod obs;
 
 mod whisper_host {
     use std::sync::Mutex;
@@ -29,6 +33,13 @@ mod whisper_host {
         ["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost"].into_iter().find(|x| Some(*x) == origin)
     }
     pub(crate) const DEVICE_NAME: &str = "whisper-core check";
+    pub(crate) const DISCORD_APP_ID: &str = "0";
+    pub(crate) const DISCORD_BUTTON: &str = "Whisper";
+    pub(crate) const APP_URL: &str = "https://github.com/Whisper-Music/whisper-core";
+    pub(crate) const OBS_IMG_SRC: &str = "https://example.com";
+    pub(crate) fn cover_ok(url: &str) -> bool {
+        url.starts_with("https://example.com/")
+    }
 }
 
 /// Всё, чем пользуется приложение: если здесь что-то перестало собираться, сломается и lib.rs приложения.
@@ -42,4 +53,6 @@ pub async fn api_surface(req: tauri::http::Request<Vec<u8>>) {
     let _ = whisper::upload::album_title(Some("x"));
     let _ = whisper::upload::TrackFile::new("x", b"ID3");
     let _ = whisper::upload::MAX_TRACK_UPLOAD;
+    obs::obs_state(serde_json::json!({ "cover": "https://evil.com/x" }));
+    let _ = discord::discord_status();
 }

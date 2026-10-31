@@ -1,0 +1,136 @@
+<!doctype html>
+<!--
+  Виджет «Сейчас играет» для OBS (Источник → Браузер → http://127.0.0.1:<порт>/).
+  Отдаётся приложением (src-tauri/src/obs.rs). Оформление стиля подключается из /theme.css —
+  это секция «@@ css whisper-obs» файла темы .wmt (docs/WMT-FORMAT.md, раздел «Виджет для OBS»).
+
+  Разметка (на неё можно опираться в CSS темы):
+    #w.w [data-base=neon|royal|steam|lolitta] [data-layout=card|compact|bar] [data-playing] [data-empty] [data-paused-hidden]
+      .w-bg                фон карточки (полупрозрачный, по умолчанию — «стекло»)
+      .w-art > img.w-cover обложка
+      .w-info
+        .w-title           название
+        .w-artist          исполнители
+        .w-bar > i         полоска прогресса (ширина i = доля прослушанного)
+        .w-time > .w-cur, .w-dur
+      .w-eq > i×4          «эквалайзер», пляшет, пока играет
+      .w-play > i          значок «плей» (на паузе) / «пауза» (играет); по умолчанию скрыт — тема включает и ставит его
+      .w-deco > i×6        пустые элементы для декора темы (ручки, решётки, лампочки); по умолчанию скрыты
+  Переменные на #w: --a, --b (цвета стиля или обложки), --alpha (непрозрачность фона, 0…1),
+                    --p (прогресс 0…1), --cover (url обложки).
+-->
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сейчас играет</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; background: transparent; overflow: hidden; }
+  body { font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; color: #fff; padding: 12px; }
+
+  .w {
+    --a: #a66bff; --b: #e060ff; --alpha: .55; --p: 0; --r: 20px;
+    position: relative; display: flex; align-items: center; gap: 14px;
+    width: max-content; max-width: calc(100vw - 24px); min-width: 280px;
+    padding: 12px 18px 12px 12px; border-radius: var(--r); isolation: isolate;
+    transition: opacity .5s ease, transform .5s cubic-bezier(.2,.8,.2,1);
+  }
+  .w[data-empty], .w[data-paused-hidden] { opacity: 0; transform: translateY(10px) scale(.98); }
+  .w-bg {
+    position: absolute; inset: 0; z-index: -1; border-radius: inherit;
+    background:
+      linear-gradient(120deg, color-mix(in srgb, var(--a) 22%, transparent), transparent 55%),
+      rgba(12, 8, 24, var(--alpha));
+    border: 1px solid color-mix(in srgb, var(--a) 45%, transparent);
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  }
+  .w-art { position: relative; flex: none; width: 76px; height: 76px; }
+  .w-cover {
+    width: 100%; height: 100%; object-fit: cover; border-radius: calc(var(--r) * .6); display: block;
+    background: rgba(255,255,255,.08); box-shadow: 0 4px 14px rgba(0,0,0,.4);
+    transition: opacity .35s ease;
+  }
+  .w-cover.swap { opacity: 0; }
+  .w-info { min-width: 0; display: flex; flex-direction: column; gap: 3px; width: 300px; }
+  .w-title { font-size: 18px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 6px rgba(0,0,0,.5); }
+  .w-artist { font-size: 14px; opacity: .78; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .w-bar { margin-top: 6px; height: 4px; border-radius: 4px; background: rgba(255,255,255,.18); overflow: hidden; }
+  .w-bar i { display: block; height: 100%; width: calc(var(--p) * 100%); border-radius: inherit;
+    background: linear-gradient(90deg, var(--a), var(--b)); box-shadow: 0 0 10px var(--a); }
+  .w-time { display: flex; justify-content: space-between; font-size: 11px; opacity: .65; font-variant-numeric: tabular-nums; }
+  .w-eq { flex: none; display: flex; align-items: flex-end; gap: 3px; height: 22px; align-self: center; }
+  .w-eq i { width: 4px; height: 25%; border-radius: 2px; background: linear-gradient(var(--b), var(--a)); transition: height .3s; }
+  .w[data-playing] .w-eq i { animation: eq 1s ease-in-out infinite alternate; }
+  .w[data-playing] .w-eq i:nth-child(2) { animation-duration: .8s; animation-delay: -.3s; }
+  .w[data-playing] .w-eq i:nth-child(3) { animation-duration: 1.15s; animation-delay: -.6s; }
+  .w[data-playing] .w-eq i:nth-child(4) { animation-duration: .9s; animation-delay: -.15s; }
+  @keyframes eq { from { height: 20%; } to { height: 100%; } }
+  /* значок состояния и декор — есть в разметке всегда, показывает их CSS темы (display и место — её дело) */
+  .w-play, .w-deco { display: none; }
+  .w-play { place-items: center; width: 40px; height: 40px; color: #fff; }
+  .w-play i { display: block; width: 40%; height: 46%; margin-left: 8%; background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%); }
+  .w[data-playing] .w-play i { margin-left: 0; width: 38%; clip-path: none; background: linear-gradient(90deg, currentColor 0 34%, transparent 34% 66%, currentColor 66%); }
+  .w-deco { position: absolute; inset: 0; pointer-events: none; }
+  .w-deco i { position: absolute; display: block; }
+  .w-info > * { transition: opacity .3s ease, transform .3s ease; }
+  .w.swapping .w-info > * { opacity: 0; transform: translateX(-6px); }
+
+  /* компактный: без прогресса и времени */
+  .w[data-layout="compact"] { padding: 8px 14px 8px 8px; gap: 10px; }
+  .w[data-layout="compact"] .w-art { width: 46px; height: 46px; }
+  .w[data-layout="compact"] .w-bar, .w[data-layout="compact"] .w-time { display: none; }
+  .w[data-layout="compact"] .w-info { width: 240px; }
+  .w[data-layout="compact"] .w-title { font-size: 15px; }
+  .w[data-layout="compact"] .w-artist { font-size: 12px; }
+  /* полоска: одна строка «Исполнитель — Название» и тонкий прогресс снизу */
+  .w[data-layout="bar"] { padding: 8px 16px; gap: 10px; --r: 999px; }
+  .w[data-layout="bar"] .w-art { width: 30px; height: 30px; }
+  .w[data-layout="bar"] .w-cover { border-radius: 50%; }
+  .w[data-layout="bar"] .w-info { flex-direction: row; align-items: baseline; gap: 8px; width: auto; max-width: 420px; }
+  .w[data-layout="bar"] .w-info > * { min-width: 0; flex: 0 1 auto; }
+  .w[data-layout="bar"] .w-artist { flex-shrink: 2; }
+  .w[data-layout="bar"] .w-title { font-size: 15px; }
+  .w[data-layout="bar"] .w-artist { font-size: 13px; order: -1; }
+  .w[data-layout="bar"] .w-artist::after { content: " —"; }
+  .w[data-layout="bar"] .w-time { display: none; }
+  .w[data-layout="bar"] .w-bar { position: absolute; left: 18px; right: 18px; bottom: 3px; height: 2px; margin: 0; }
+  .w[data-layout="bar"] .w-eq { height: 14px; }
+
+  /* оформление встроенных стилей */
+  .w[data-base="royal"] { --r: 6px; font-family: "Palatino Linotype", Georgia, serif; }
+  .w[data-base="royal"] .w-bg { background: linear-gradient(180deg, rgba(30,22,14,var(--alpha)), rgba(14,10,8,var(--alpha))); border: 1px solid color-mix(in srgb, var(--a) 70%, transparent); box-shadow: inset 0 0 0 3px rgba(0,0,0,.25), inset 0 0 0 4px color-mix(in srgb, var(--a) 30%, transparent), 0 10px 26px rgba(0,0,0,.45); }
+  .w[data-base="royal"] .w-title { letter-spacing: .02em; color: color-mix(in srgb, var(--a) 35%, #fff); }
+  .w[data-base="royal"] .w-bar i { box-shadow: none; }
+  .w[data-base="steam"] { --r: 4px; font-family: "Georgia", serif; }
+  .w[data-base="steam"] .w-bg { background: linear-gradient(180deg, rgba(40,28,18,var(--alpha)), rgba(22,15,10,var(--alpha))); border: 2px solid color-mix(in srgb, var(--a) 60%, #3a2412); box-shadow: inset 0 2px 6px rgba(0,0,0,.6), 0 8px 22px rgba(0,0,0,.5); }
+  .w[data-base="steam"] .w-bar { height: 6px; border-radius: 2px; box-shadow: inset 0 1px 3px rgba(0,0,0,.7); }
+  .w[data-base="steam"] .w-bar i { box-shadow: none; }
+  .w[data-base="lolitta"] { --r: 18px; color: #4a2030; }
+  .w[data-base="lolitta"] .w-bg { background: linear-gradient(180deg, rgba(255,236,240,var(--alpha)), rgba(246,214,222,var(--alpha))); border: 1px solid #e2aab4; box-shadow: 0 0 0 2px rgba(255,255,255,.5), 0 8px 22px rgba(120,40,60,.25); }
+  .w[data-base="lolitta"] .w-title, .w[data-base="lolitta"] .w-artist { text-shadow: none; }
+  .w[data-base="lolitta"] .w-bar { background: rgba(140,74,92,.2); }
+  .w[data-base="lolitta"] .w-bar i { box-shadow: none; }
+
+  @media (prefers-reduced-motion: reduce) { .w, .w * { animation: none !important; transition: none !important; } }
+</style>
+<link id="themeCss" rel="stylesheet">
+</head>
+<body>
+  <div id="w" class="w" data-empty data-base="neon" data-layout="card">
+    <div class="w-bg"></div>
+    <div class="w-art"><img class="w-cover" alt=""></div>
+    <div class="w-info">
+      <div class="w-title"></div>
+      <div class="w-artist"></div>
+      <div class="w-bar"><i></i></div>
+      <div class="w-time"><span class="w-cur">0:00</span><span class="w-dur">0:00</span></div>
+    </div>
+    <div class="w-eq"><i></i><i></i><i></i><i></i></div>
+    <div class="w-play" aria-hidden="true"><i></i></div>
+    <div class="w-deco" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  </div>
+<script src="/widget.js"></script>
+</body>
+</html>

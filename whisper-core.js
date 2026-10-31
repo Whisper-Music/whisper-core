@@ -168,8 +168,12 @@
     reload: (at = 0, hold = false) => call("reload", Math.max(0, num(at)), !!hold),
     // Что сейчас с самим файлом — для модулей, которым важны мгновения (синхронизация «Слушать вместе»):
     // { paused, ended, duration — 0, пока неизвестна; pending — трек показан, но ещё не загружался (с прошлого запуска);
-    //   loading — грузится; startAt — с какой позиции он начнёт, пока pending/loading, иначе null }
-    media: () => ({ paused: true, ended: false, duration: 0, pending: false, loading: false, startAt: null, ...(call("media") || {}) }),
+    //   loading — грузится; startAt — с какой позиции он начнёт, пока pending/loading, иначе null;
+    //   has — есть ли у приложения сам плеер (false — ещё ни разу не создан); time — позиция самого файла, с;
+    //   rate — скорость файла; buffering — данных пока не хватает, чтобы играть дальше; error — файл не загрузился }
+    // Нужны модулям, которые проверяют, идёт ли звук на самом деле (Discord: «завис на загрузке — значит, пауза»).
+    media: () => ({ paused: true, ended: false, duration: 0, pending: false, loading: false, startAt: null,
+      has: true, time: num(call("position")), rate: st.rate, buffering: false, error: false, ...(call("media") || {}) }),
     like: (t) => call("like", t ? to("track", t) : st.track),
     dislike: (t) => call("dislike", t ? to("track", t) : st.track),
     // приложение -> ядро: что изменилось. Событие уходит, только если значение правда поменялось.
@@ -365,7 +369,10 @@
     image: (src, cls) => { const im = document.createElement("img"); im.alt = ""; im.loading = "lazy"; if (cls) im.className = cls; if (src) im.src = src; return im; },
     decorateRow: () => {},               // (li, track, before) — свои значки в строке трека (например, «скачан»)
     icon: (name) => ICONS[name] || "",
-    settingsCard: null,                  // (card, { section, first }) — встроить карточку настроек модуля; нет — у модуля нет настроек
+    settingsCard: null,                  // (card, { section, first, colbreak }) — встроить карточку настроек модуля; нет — у модуля нет настроек
+    accentColors: () => null,            // () => { accent, accent2 } — цвета стиля строго #rrggbb (виджет OBS); нет — цвета по умолчанию
+    obsTheme: () => null,                // () => { key, css, settings } — секции whisper-obs текущего стиля (key меняется со стилем)
+    rangeFill: () => {},                 // (input[type=range]) — перерисовать заливку ползунка, если приложение рисует её само
     secretSaved: () => {},               // ключ/токен только что сохранён (приложение может предупредить, если хранилище небезопасное)
   };
   const ICONS = {
