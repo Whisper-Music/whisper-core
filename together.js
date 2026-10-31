@@ -449,12 +449,15 @@
   function open() {
     if (panel) return close();
     const wrap = el("div", "login modal");
+    // слева от окна — отдельный модуль «Участники» (виден только в комнате), справа — само окно
+    const stage = el("div", "rmstage");
+    const side = el("aside", "panel login-box rmside"); side.hidden = true;
     const box = el("div", "panel login-box modalbox rmbox");
-    wrap.append(box); document.body.append(wrap);
+    stage.append(side, box); wrap.append(stage); document.body.append(wrap);
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
     document.addEventListener("keydown", onKey, true);
-    wrap.onpointerdown = (e) => { if (e.target === wrap) close(); };
-    panel = { wrap, box, onKey };
+    wrap.onpointerdown = (e) => { if (e.target === wrap || e.target === stage) close(); };
+    panel = { wrap, box, side, onKey };
     paint();
   }
   function close() {
@@ -523,34 +526,7 @@
       if (!follow) { const b = el("button", "nav active", "Вернуться в комнату"); b.type = "button"; b.onclick = rejoin; st.append(b); }
       box.append(st);
     }
-    // участники
-    const ms = el("div", "rmmembers");
-    ms.append(el("small", "", `Слушают: ${room.members.length}`));
-    const ul = el("div", "rmchips");
-    let target = null;
-    for (const m of room.members) {
-      const label = (m.isHost ? "★ " : "") + m.nickname + (m.isMe ? " (ты)" : "");
-      const id = memberId(m);
-      // ведущий: нажать на участника — передать ему управление
-      if (isHost() && !m.isMe && !m.isHost && id != null) {
-        const b = el("button", "rmchip pick" + (confirmFor === String(id) ? " sel" : ""), label);
-        b.type = "button"; b.title = "Сделать ведущим";
-        b.onclick = () => { confirmFor = confirmFor === String(id) ? null : String(id); paint(); };
-        ul.append(b);
-        if (confirmFor === String(id)) target = m;
-      } else ul.append(el("span", "rmchip" + (m.isHost ? " host" : "") + (m.isMe ? " me" : ""), label));
-    }
-    ms.append(ul);
-    if (isHost() && !target && room.members.some((m) => !m.isMe && memberId(m) != null)) ms.append(el("small", "rmhint", "Нажми на участника, чтобы передать ему управление"));
-    if (target) {
-      const cf = el("div", "rmconfirm");
-      cf.append(el("span", "", `Передать управление ${target.nickname}? Комната и код останутся, ты станешь гостем.`));
-      const yes = el("button", "nav active", "Передать"); yes.type = "button"; yes.onclick = () => transfer(target);
-      const no = el("button", "nav", "Отмена"); no.type = "button"; no.onclick = () => { confirmFor = null; paint(); };
-      const r2 = el("div", "rmconfirmbtns"); r2.append(no, yes); cf.append(r2);
-      ms.append(cf);
-    }
-    box.append(ms);
+    // участники — в отдельном модуле слева от окна (paintSide)
     // ведущий: предложения сами встают в очередь
     if (isHost()) {
       const lb = el("label", "switch rmauto");
@@ -581,6 +557,74 @@
     const lv = el("button", "nav danger", isHost() ? "Закрыть комнату" : "Выйти"); lv.type = "button"; lv.onclick = () => { leave(); };
     const done = el("button", "nav active", "Готово"); done.type = "button"; done.onclick = close;
     r.append(lv, done); box.append(r);
+  }
+
+  // ---------- модуль «Участники» слева от окна ----------
+  // Ведущий (с короной) всегда первый, дальше — слушатели в порядке входа. Сменился ведущий — список перестраивается,
+  // строки плавно переезжают на новые места (FLIP: запоминаем старые позиции до перерисовки и анимируем сдвиг).
+  const CROWN = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M3 8.5l4.6 3.8L12 5l4.4 7.3L21 8.5 19.2 18H4.8L3 8.5z" fill="currentColor"/><path d="M5 20.2h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  const memberKey = (m) => String(memberId(m) ?? m.nickname ?? "");
+  const sortedMembers = () => (room?.members || []).map((m, i) => ({ m, i }))
+    .sort((a, b) => (b.m.isHost ? 1 : 0) - (a.m.isHost ? 1 : 0) || a.i - b.i).map((x) => x.m);
+  const animOff = () => document.documentElement.dataset.anim === "off" || document.body.classList.contains("reduce-motion")
+    || matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+  function personRow(m) {
+    const id = memberId(m);
+    const canPick = isHost() && !m.isMe && !m.isHost && id != null;      // ведущий: нажать — передать управление
+    const sel = canPick && confirmFor === String(id);
+    const row = el(canPick ? "button" : "div", "rmperson" + (m.isHost ? " host" : "") + (m.isMe ? " me" : "") + (canPick ? " pick" : "") + (sel ? " sel" : ""));
+    row.dataset.key = memberKey(m);
+    if (canPick) {
+      row.type = "button"; row.title = "Сделать ведущим";
+      row.onclick = () => { confirmFor = sel ? null : String(id); paint(); };
+    }
+    const name = String(m.nickname || "Гость");
+    const av = el("span", "rmava", name.trim().charAt(0).toUpperCase() || "?");
+    if (m.isHost) av.insertAdjacentHTML("beforeend", `<i class="rmcrown" title="Ведущий">${CROWN}</i>`);
+    const tx = el("span", "rmpname");
+    tx.append(el("b", "", name), el("small", "", m.isHost ? (m.isMe ? "ведущий · это ты" : "ведущий · управляет музыкой") : (m.isMe ? "это ты" : "слушает")));
+    row.append(av, tx);
+    return { row, target: sel ? m : null };
+  }
+
+  function paintSide(side) {
+    const before = new Map();
+    for (const r of side.querySelectorAll(".rmperson[data-key]")) before.set(r.dataset.key, r.getBoundingClientRect().top);
+    side.textContent = "";
+    const list = sortedMembers();
+    const host = list.find((m) => m.isHost), rest = list.filter((m) => !m.isHost);
+    const head = el("div", "rmsidehead");
+    head.append(el("b", "", "Участники"), el("span", "rmcount", String(list.length)));
+    side.append(head);
+    const ul = el("div", "rmpeople");
+    let target = null;
+    if (host) {
+      ul.append(el("small", "rmgroup", "Ведущий"));
+      ul.append(personRow(host).row);
+    }
+    ul.append(el("small", "rmgroup", rest.length ? `Слушатели · ${rest.length}` : "Слушателей пока нет"));
+    for (const m of rest) { const p = personRow(m); ul.append(p.row); if (p.target) target = p.target; }
+    if (!rest.length) ul.append(el("p", "rmempty", "Отправь друзьям код или ссылку-приглашение — они появятся здесь."));
+    side.append(ul);
+    if (isHost() && !target && rest.some((m) => !m.isMe && memberId(m) != null)) side.append(el("small", "rmhint", "Нажми на слушателя, чтобы передать ему корону — управление музыкой"));
+    if (!isHost()) side.append(el("small", "rmhint", "Музыкой управляет ведущий с короной. Предложить трек — «⋯» у трека"));
+    if (target) {
+      const cf = el("div", "rmconfirm");
+      cf.append(el("span", "", `Передать управление ${target.nickname}? Комната и код останутся, ты станешь слушателем.`));
+      const yes = el("button", "nav active", "Передать"); yes.type = "button"; yes.onclick = () => transfer(target);
+      const no = el("button", "nav", "Отмена"); no.type = "button"; no.onclick = () => { confirmFor = null; paint(); };
+      const r2 = el("div", "rmconfirmbtns"); r2.append(no, yes); cf.append(r2);
+      side.append(cf);
+    }
+    // перестроение: строки переезжают со старых мест на новые
+    if (!before.size || animOff()) return;
+    for (const r of side.querySelectorAll(".rmperson[data-key]")) {
+      const was = before.get(r.dataset.key);
+      if (was == null) { r.animate?.([{ opacity: 0, transform: "translateX(-8px)" }, { opacity: 1, transform: "none" }], { duration: 260, easing: "ease-out" }); continue; }
+      const dy = was - r.getBoundingClientRect().top;
+      if (Math.abs(dy) > 1) r.animate?.([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 380, easing: "cubic-bezier(.2,.75,.2,1)" });
+    }
   }
 
   // ---------- режим комнаты: ярлык под названием трека в плеере ----------
@@ -639,6 +683,8 @@
     panel.box.textContent = "";
     if (inRoom()) paintRoom(panel.box); else paintSetup(panel.box);
     if (keepStatus) setStatus(keepStatus);
+    panel.side.hidden = !inRoom();
+    if (inRoom()) paintSide(panel.side); else panel.side.textContent = "";
   }
 
   // кнопка — та, что приложение уже поставило в разметку (#togetherBtn), иначе своя в начале правого блока плеера
