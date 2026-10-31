@@ -1,0 +1,7 @@
+/* Виджет для OBS (общий модуль ядра, obs.js): карточка в настройках. Сам виджет оформлен в rust/obs/widget.html. */
+.obsbox { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.obsurl { display: flex; gap: 8px; align-items: center; }
+.obsurl .field { flex: 1; min-width: 0; font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; padding: 8px 12px; }
+.obsurl .nav { flex: none; }
+.obsval { font-size: 12px; color: var(--muted); margin-left: 4px; }
+#obsNote.err { color: #ff8a8a; }
