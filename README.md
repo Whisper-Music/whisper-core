@@ -57,6 +57,9 @@ mod obs;
 mod whisper_host; // своё у приложения: скопировать rust/whisper_host.example.rs в src-tauri/src/whisper_host.rs
 ```
 
+Нужные библиотеки в `src-tauri/Cargo.toml`: `tauri` 2, `tauri-plugin-http` 2, `serde` (derive), `serde_json`,
+`tokio` (`sync`, `time`), `getrandom` 0.3, под `cfg(unix)` — `libc` (полный список и состав — `rust/check/Cargo.toml`).
+
 Команды регистрируются как обычно (`generate_handler!`, `build.rs`, `capabilities`): `whisper::wa_token_exists`,
 `whisper::auth::wa_auth_issue`, `whisper::stream::wa_prefetch`, `whisper::rooms::wa_room_create`, `discord::discord_update`,
 `obs::obs_state` и т. д.; протокол `wa` →

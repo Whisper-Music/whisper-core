@@ -84,6 +84,10 @@ mod discord;
 mod obs;
 mod whisper_host;   // своё: скопировать rust/whisper_host.example.rs и поправить
 ```
+- Библиотеки в `Cargo.toml` приложения, без которых Rust ядра не соберётся: `tauri` 2, `tauri-plugin-http` 2,
+  `serde` (derive), `serde_json`, `tokio` (`sync`, `time`), `getrandom` 0.3, а под `cfg(unix)` — `libc`.
+  Ядру понадобилась новая библиотека — добавь её в `rust/check/Cargo.toml`, сюда и в docs/CORE.md: иначе у второго
+  приложения сборка сломается.
 - `whisper_host.rs` **обязан** дать: `token_get/token_set/token_clear` (ключ wa_… в системном хранилище),
   `heavy_slot()` (общий семафор больших файлов), `app_origin(origin)` (Origin своих окон для CORS `wa://`),
   `DEVICE_NAME`, `DISCORD_APP_ID`, `DISCORD_BUTTON`, `APP_URL`, `OBS_IMG_SRC` (CSP картинок виджета), `cover_ok(url)`.
