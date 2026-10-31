@@ -1,0 +1,84 @@
+/* Очередь и история прослушивания (core/queue.js) — общий модуль приложений Whisper.
+   Панель выезжает справа поверх содержимого, между верхними вкладками и нижним плеером (top/bottom/right — из JS).
+   z-index ниже окон-подтверждений (.login, 10), меню трека и подсказок. */
+.qpanel {
+  /* темы задают .panel своё position: relative (для рамок) — панели очереди нужно именно fixed */
+  position: fixed !important; z-index: 9 !important; width: min(400px, calc(100vw - 40px));
+  display: flex; flex-direction: column; overflow: hidden;
+  -webkit-backdrop-filter: blur(28px) saturate(140%); backdrop-filter: blur(28px) saturate(140%);
+  box-shadow: 0 18px 50px rgba(0,0,0,.55), 0 0 var(--glow) color-mix(in srgb, var(--glow-c) 30%, transparent);
+  animation: qIn .18s ease-out;
+}
+.qpanel[hidden] { display: none; }
+@keyframes qIn { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+:root[data-anim="off"] .qpanel { animation: none; }
+
+/* отступы с запасом: в темах «Королевский», «Стимпанк», «Lolitta» по углам панелей — орнамент */
+.qhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 18px 26px 8px 28px; }
+.qhead b { font-size: 16px; }
+.qclose { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); }
+.qclose:hover { color: var(--text); background: rgba(255,255,255,.1); }
+
+.qbody { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 26px 18px; }
+:root[data-style="neon"] .qhead { padding: 14px 12px 8px 18px; }
+:root[data-style="neon"] .qbody { padding: 0 8px 14px 10px; }
+:root[data-style="royal"] .qhead { padding: 24px 46px 8px 52px; }
+:root[data-style="royal"] .qbody { padding: 0 22px 36px 24px; }
+.qbody::-webkit-scrollbar { width: 6px; }
+.qbody::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 6px; }
+
+.qsec { margin-top: 10px; }
+.qsec h4 {
+  display: flex; align-items: baseline; gap: 8px; margin: 0 0 4px; padding: 0 8px;
+  font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+}
+.qsec h4 > span { flex: none; }
+.qsrc { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12px; opacity: .8; }
+.qclear { margin-left: auto; padding: 2px 10px; border-radius: 999px; font-size: 11px; letter-spacing: 0; text-transform: none; font-weight: 500; color: var(--muted); }
+.qclear:hover { color: var(--text); background: rgba(255,255,255,.1); }
+.qclear[hidden] { display: none; }
+
+.qpanel .list li { gap: 10px; padding: 5px 6px; border-radius: 10px; }
+.qpanel .list img { width: 40px; height: 40px; border-radius: 8px; }
+.qpanel .list li > div { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.qpanel .list .t, .qpanel .list .a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qpanel .list .t { font-size: 14px; }
+.qpanel .list .a { font-size: 12px; }
+.qpanel .gotmark { margin-left: 0; width: 22px; height: 22px; }
+.qpanel .gotmark svg { width: 18px; height: 18px; }
+.qpanel .morebtn { margin-left: -6px; }
+.qnow li { background: rgba(255,255,255,.06); }
+
+/* «Далее»: ручка перетаскивания и крестик видны при наведении */
+.qnext .grip { margin: 0 -6px 0 -2px; }
+.qx { flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); opacity: 0; transition: opacity .15s, background .15s, color .15s; }
+.qnext li:hover .qx, .qx:focus-visible { opacity: 1; }
+.qx:hover { color: var(--text); background: rgba(255,255,255,.1); }
+.qnext li.drop-after { box-shadow: inset 0 -3px 0 var(--glow-c); }
+.qmore { display: block; margin: 4px auto 0; padding: 5px 14px; border-radius: 999px; font-size: 12px; color: var(--muted); }
+.qmore:hover { color: var(--text); background: rgba(255,255,255,.08); }
+.qmore[hidden] { display: none; }
+.qempty { margin: 4px 8px; font-size: 13px; color: var(--muted); }
+.qempty[hidden] { display: none; }
+
+/* «История»: группы по дням и время прослушивания */
+.qday { margin: 10px 8px 2px; font-size: 12px; color: var(--muted); opacity: .85; }
+.qtime { flex: none; margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.qtime + .morebtn { margin-left: 0; }
+
+/* кнопки, открывающие панель */
+.player .qtoggle.on { color: var(--accent); filter: drop-shadow(0 0 6px color-mix(in srgb, var(--btn-glow) 70%, transparent)); }
+/* кнопка под «Жанрами и настроениями»: форма и цвета — от .nav темы, как у соседней кнопки, только компактнее */
+.qwavebtn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  margin-top: 8px; padding: 6px 14px; font-size: 13px; white-space: nowrap;
+}
+.qwavebtn svg { width: 16px; height: 16px; flex: none; }
+.main:not(.wavemode) .qwavebtn { display: none; }
+@media (max-width: 880px) { .qwavebtn { font-size: 12px; padding: 5px 10px; } }
+
+/* узкое окно: справа в плеере теперь три кнопки */
+@media (max-width: 880px) {
+  .player { grid-template-columns: minmax(110px, 190px) 1fr 126px; }
+}
+:root[data-anim="off"] .qx { transition: none; }

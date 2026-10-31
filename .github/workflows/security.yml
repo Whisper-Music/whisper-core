@@ -1,0 +1,57 @@
+# Проверки безопасности (аудит F-12): тесты Rust на Windows и Linux, известные уязвимости зависимостей
+# (RustSec через cargo audit и cargo deny), синтаксис JavaScript. Сборка падает при новом advisory.
+name: security
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'   # раз в неделю: advisory появляются и без изменений в коде
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }      # ядро Whisper (src/core) — подмодуль whisper-core
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: src-tauri }
+      - name: Системные библиотеки (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+      # cargo test --lib включает отрицательные тесты политики IPC: операции Яндекса и архива,
+      # окно входа, подмена файлов (bg.rs, download.rs), сокет Discord, ключ OBS
+      - run: cargo test --locked --lib
+        working-directory: src-tauri
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Синтаксис JavaScript
+        shell: bash
+        run: for f in src/*.js src/core/*.js; do node --check "$f"; done
+
+  audit:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo audit (RustSec)
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit --file src-tauri/Cargo.lock --deny warnings
+        continue-on-error: false
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: src-tauri/Cargo.toml
+          command: check advisories

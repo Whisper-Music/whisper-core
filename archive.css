@@ -1,0 +1,94 @@
+/* ---------- Whisper Archive (core/archive.js — общий модуль приложений Whisper): настройки ---------- */
+#waCard [hidden] { display: none !important; }
+.wabox { display: grid; gap: 10px; margin-top: 12px; }
+.warow { display: flex; gap: 8px; align-items: stretch; }
+.warow input {
+  flex: 1; min-width: 0;
+  padding: 9px 12px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  background: rgba(0, 0, 0, .25); color: inherit; font: inherit; outline: none;
+}
+.warow input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+.wasrv { margin: 0; font-size: 12px; opacity: .55; }
+.waacc { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 4px 0 6px; }
+.waaccname { flex: 1 1 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+#waCard > .status { margin: 0 0 10px; }
+.wainfo {
+  flex: none; width: 18px; height: 18px; display: grid; place-items: center;
+  border-radius: 50%; font-size: 13px; line-height: 1; color: var(--muted);
+  cursor: help; user-select: none; outline: none;
+}
+.wainfo:hover, .wainfo:focus-visible { color: var(--accent); }
+#waCard > .switch { margin-top: 4px; }
+
+/* ---------- окно входа ---------- */
+.wamodal { display: flex; flex-direction: column; gap: 12px; }
+.wamodal [hidden] { display: none !important; }
+.wamodal .wacode { text-align: center; font-size: 26px; letter-spacing: .5em; padding-left: .5em; font-variant-numeric: tabular-nums; }
+.walinks { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: -4px; }
+.walink { padding: 2px 0; background: none; border: 0; color: var(--accent); font: inherit; font-size: 13px; cursor: pointer; }
+.walink:hover:not(:disabled) { text-decoration: underline; }
+.walink:disabled { opacity: .5; cursor: default; }
+
+/* ---------- пункт меню во время загрузки ---------- */
+.tmenu button:disabled { opacity: .5; cursor: default; background: none; }
+
+/* ---------- метка «играет из архива»: плашка «WA» на углу обложки в плеере ---------- */
+.wacov { position: relative; display: inline-flex; flex-shrink: 0; line-height: 0; }
+.waseal {
+  position: absolute; right: -7px; bottom: -6px; z-index: 2;
+  height: 15px; padding: 0 4px;
+  display: grid; place-items: center;
+  border-radius: 8px;
+  pointer-events: auto; cursor: default;
+  animation: waSealIn .32s cubic-bezier(.2, 1.4, .4, 1) both;
+}
+.waseal[hidden] { display: none; }
+.waseal b { font: 800 8.5px/1 system-ui, "Segoe UI", sans-serif; letter-spacing: .04em; }
+@keyframes waSealIn { from { transform: scale(.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+:root[data-anim="off"] .waseal { animation: none; }
+
+/* неон: светящаяся капсула в цветах темы */
+.waseal, :root[data-style="neon"] .waseal {
+  background: var(--btn-fill, linear-gradient(135deg, var(--accent), var(--accent2)));
+  color: var(--on-accent, #0b0618);
+  box-shadow: 0 0 0 2px rgba(10, 6, 20, .85), 0 0 10px color-mix(in srgb, var(--btn-glow, var(--accent)) 75%, transparent);
+}
+:root[data-style="neon"] body.is-playing .waseal { animation: waSealIn .32s cubic-bezier(.2, 1.4, .4, 1) both, waNeonPulse 2.6s ease-in-out .32s infinite; }
+@keyframes waNeonPulse {
+  50% { box-shadow: 0 0 0 2px rgba(10, 6, 20, .85), 0 0 16px color-mix(in srgb, var(--accent2) 85%, transparent); }
+}
+:root[data-anim="off"][data-style="neon"] body.is-playing .waseal { animation: none; }
+
+/* королевский: геральдическая табличка — золотая кайма, багряное поле, буквы с засечками */
+:root[data-style="royal"] .waseal {
+  height: 15px; padding: 0 4px; right: -6px; bottom: -5px;
+  border-radius: 1px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent2) 80%, #000), var(--accent2));
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .7), 0 2px 5px rgba(0, 0, 0, .55);
+}
+:root[data-style="royal"] .waseal b { font: 700 9px/1 var(--font-display, Georgia, serif); letter-spacing: .08em; }
+
+/* стимпанк: латунная бирка */
+:root[data-style="steam"] .waseal {
+  border-radius: 2px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 55%, #fff3d6), var(--accent) 50%, var(--accent2));
+  color: #1c1007;
+  border: 1px solid #120a04;
+  box-shadow: inset 0 -1px 2px rgba(0, 0, 0, .45), inset 0 1px 1px rgba(255, 240, 200, .5), 0 1px 3px rgba(0, 0, 0, .7);
+}
+:root[data-style="steam"] .waseal b { font: 800 8.5px/1 Georgia, "Times New Roman", serif; letter-spacing: .06em; }
+
+/* лолита: жемчужная капсула с розовым кантом */
+:root[data-style="lolitta"] .waseal {
+  background: linear-gradient(180deg, #fff, var(--l-pearl, #fff4f6) 60%, color-mix(in srgb, var(--accent) 35%, #fff));
+  color: var(--l-ink, #5a2533);
+  box-shadow: 0 0 0 1.5px var(--l-lo, var(--accent)), 0 0 0 3px var(--l-pearl, #fff4f6), 0 2px 6px rgba(90, 30, 45, .45);
+}
+
+/* «Для разработчиков»: разделы «Скачивание треков» и «Whisper Archive» внутри одной карточки */
+#waCard .devh { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+#waCard .devsec { display: flex; flex-direction: column; gap: 12px; padding-bottom: 6px; }
+#waCard .devsec .status:empty { display: none; }

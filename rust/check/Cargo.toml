@@ -1,0 +1,19 @@
+# Проверка общей части Whisper Archive (rust/whisper/) без приложения: cargo test --manifest-path rust/check/Cargo.toml
+# Только в отдельной копии whisper-core, НЕ в src/core приложения: Tauri встроит в программу всю папку src,
+# вместе с rust/check/target.
+# Нужен Windows (как в CI) или Linux с библиотеками Tauri (libwebkit2gtk-4.1-dev и т. д.).
+[package]
+name = "whisper-core-check"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tauri = "2"
+tauri-plugin-http = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["sync", "time"] }
