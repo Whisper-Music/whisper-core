@@ -49,28 +49,107 @@ static KEY: Mutex<String> = Mutex::new(String::new());
 /// Ключ виджета: создаётся один раз и хранится в файле obs.key в папке настроек приложения.
 fn load_key(app: &tauri::AppHandle) -> Result<String, String> {
     use tauri::Manager;
-    let ok = |k: &str| k.len() == 32 && k.bytes().all(|b| b.is_ascii_hexdigit());
     let path = app.path().app_config_dir().map_err(|e| e.to_string())?.join("obs.key");
-    if let Ok(k) = std::fs::read_to_string(&path) {
-        let k = k.trim().to_string();
-        if ok(&k) {
-            return Ok(k);
+    load_key_at(&path)
+}
+
+const KEY_FILE_MAX: u64 = 256;
+
+fn key_ok(k: &str) -> bool {
+    k.len() == 32 && k.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Прочитать сохранённый ключ так же осторожно, как secret.rs читает токен:
+///  * Unix — открытие с O_NOFOLLOW (ссылка на чужой файл не откроется) и O_NONBLOCK, затем проверка
+///    уже открытого дескриптора: обычный файл, владелец — текущий пользователь, права не шире 0600.
+///    Если файл был доступен другим (скопировали, распаковали из архива), ключ мог утечь — такой ключ
+///    не используется, создаётся новый.
+///  * Windows — открытие без перехода по ссылке (FILE_FLAG_OPEN_REPARSE_POINT), обычный файл;
+///    папка настроек в %APPDATA% и так закрыта правами пользователя.
+///
+/// `None` — файла нет или ему нельзя доверять: тогда ключ создаётся заново.
+fn read_key_file(path: &std::path::Path) -> Option<String> {
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        o.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let f = o.open(path).ok()?;
+    let m = f.metadata().ok()?;
+    if !m.is_file() || m.len() > KEY_FILE_MAX {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid не имеет побочных эффектов и не может завершиться ошибкой
+        let me = unsafe { libc::geteuid() };
+        if m.uid() != me || m.mode() & 0o077 != 0 {
+            return None;
         }
+    }
+    let mut k = String::new();
+    f.take(KEY_FILE_MAX).read_to_string(&mut k).ok()?;
+    let k = k.trim().to_string();
+    key_ok(&k).then_some(k)
+}
+
+/// Запись через новый временный файл (O_EXCL, на Unix 0600 и O_NOFOLLOW) и атомарное переименование:
+/// старый файл никогда не открывается на запись, поэтому подложенная на его место ссылка не приведёт
+/// к записи ключа в чужой файл, файл с неправильными правами просто заменяется новым,
+/// а прерванная запись не оставит половину ключа.
+fn write_key_file(path: &std::path::Path, key: &str) -> std::io::Result<()> {
+    let dir = path.parent().ok_or_else(|| std::io::Error::other("нет папки настроек"))?;
+    let mut d = std::fs::DirBuilder::new();
+    d.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        d.mode(0o700);
+    }
+    d.create(dir)?;
+    let mut r = [0u8; 8];
+    getrandom::fill(&mut r).map_err(|e| std::io::Error::other(e.to_string()))?;
+    let tmp = dir.join(format!(".obs.key.{}.tmp", r.iter().map(|b| format!("{b:02x}")).collect::<String>()));
+    let res = (|| -> std::io::Result<()> {
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let mut f = o.open(&tmp)?;
+        f.write_all(key.as_bytes())?;
+        f.sync_all()?;
+        drop(f);
+        std::fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
+}
+
+fn load_key_at(path: &std::path::Path) -> Result<String, String> {
+    if let Some(k) = read_key_file(path) {
+        return Ok(k);
     }
     let mut b = [0u8; 16];
     getrandom::fill(&mut b).map_err(|e| e.to_string())?;
     let k: String = b.iter().map(|x| format!("{x:02x}")).collect();
-    if let Some(d) = path.parent() {
-        let _ = std::fs::create_dir_all(d);
+    // не удалось сохранить — ключ всё равно работает до перезапуска (адрес в OBS тогда сменится)
+    if let Err(e) = write_key_file(path, &k) {
+        eprintln!("[obs] ключ виджета не сохранён: {e}");
     }
-    let mut o = std::fs::OpenOptions::new();
-    o.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        o.mode(0o600).custom_flags(libc::O_NOFOLLOW); // подложенная ссылка не перезапишет чужой файл
-    }
-    o.open(&path).and_then(|mut f| f.write_all(k.as_bytes())).map_err(|e| e.to_string())?;
     Ok(k)
 }
 
@@ -271,6 +350,61 @@ mod tests {
         assert!(same("abc", "abc"));
         assert!(!same("abc", "abd"));
         assert!(!same("abc", "ab"));
+    }
+
+    fn tmpdir(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("obs-test-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn key_file_roundtrip() {
+        let dir = tmpdir("rt");
+        let p = dir.join("obs.key");
+        let k = load_key_at(&p).unwrap();
+        assert!(key_ok(&k));
+        assert_eq!(load_key_at(&p).unwrap(), k); // тот же ключ при следующем запуске
+        std::fs::write(&p, b"not-a-key").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let k2 = load_key_at(&p).unwrap();
+        assert!(key_ok(&k2) && k2 != k); // мусор в файле — новый ключ
+        // временных файлов не остаётся
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn key_file_unix_checks() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmpdir("ux");
+        let p = dir.join("obs.key");
+        let k = load_key_at(&p).unwrap();
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+
+        // файл стал читаемым для всех — ключ мог утечь, используется новый, права снова 0600
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let k2 = load_key_at(&p).unwrap();
+        assert_ne!(k, k2);
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+
+        // ссылка на чужой файл: не читается и не перезаписывается
+        let victim = dir.join("victim");
+        std::fs::write(&victim, b"0123456789abcdef0123456789abcdef").unwrap();
+        std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o600)).unwrap();
+        std::fs::remove_file(&p).unwrap();
+        std::os::unix::fs::symlink(&victim, &p).unwrap();
+        let k3 = load_key_at(&p).unwrap();
+        assert_ne!(k3, "0123456789abcdef0123456789abcdef");
+        assert_eq!(std::fs::read(&victim).unwrap(), b"0123456789abcdef0123456789abcdef");
+        assert!(!std::fs::symlink_metadata(&p).unwrap().file_type().is_symlink()); // ссылку заменил файл
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

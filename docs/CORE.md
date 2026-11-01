@@ -357,7 +357,7 @@ Whisper.ui.define({
 | `tabs` | полоса вкладок/закладок | `.tabs` |
 | `tab` | вкладка | `.tabs .tab:not(.active)` |
 | `tab:active` | открытая вкладка | `.tabs .tab.active` |
-| `sidebar` | боковая панель | `.side` |
+| `sidebar` | боковая панель (и всё, что оформляется как она) | `.side, .pinrail` (колонка закреплённых сбоку) |
 | `nav` | кнопка боковой навигации | `.side .nav:not(.active)` |
 | `nav:active` | текущий раздел | `.side .nav.active` |
 | `search` | поле поиска (все виды) | все `search:*` ниже |

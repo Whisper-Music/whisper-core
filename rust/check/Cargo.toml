@@ -20,3 +20,7 @@ serde_json = "1"
 tokio = { version = "1", default-features = false, features = ["sync", "time"] }
 # ключ виджета OBS (rust/obs.rs) — случайные 128 бит
 getrandom = "0.3"
+
+# Unix: O_NOFOLLOW и проверка владельца при чтении obs.key (rust/obs.rs) и счётчиков входа (rust/whisper/auth.rs)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
