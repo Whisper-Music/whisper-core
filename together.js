@@ -44,7 +44,13 @@
   let syncing = 0;                // сколько действий над плеером сейчас делает сама синхронизация
   let mySpeed = null;             // скорость гостя до входа — вернём при выходе
   let hostLast = "", hostTimer = 0, hostSentAt = 0;
+  let resumeUntil = 0;            // ведущий после перезагрузки окна: до этого момента (или до «audible») состояние не шлём
   let panel = null;
+  // Комната переживает перезагрузку окна (F5, восстановление настроек): код лежит в sessionStorage — он живёт, пока
+  // открыто окно, и пропадает при выходе из приложения. Сервер сам убирает ушедших (гость — 75 с, ведущий — 120 с).
+  const KEEP_KEY = "whisper_room";
+  const keep = () => { try { if (inRoom()) sessionStorage.setItem(KEEP_KEY, JSON.stringify({ code, host: isHost(), follow, at: Date.now() })); } catch {} };
+  const unkeep = () => { try { sessionStorage.removeItem(KEEP_KEY); } catch {} };
   // ведущий: «Ставить в очередь» — предложения сами встают в очередь по одному, когда доигрывает текущий трек
   let autoQ = false;
   try { autoQ = localStorage.getItem("ym_room_autoq") === "1"; } catch {}
@@ -79,7 +85,15 @@
     if (p?.fromRoom) return p.fromRoom(r);
     return { id: r.id, title: r.title, version: r.version || undefined, durationMs: r.durationMs, artists: (r.artists || []).map((a) => ({ id: a.id || undefined, name: a.name })) };
   };
-  const roomEntity = (r, extra) => W.to("track", { ...fromRoomTrack(r), ...extra });
+  // archiveId — трек есть в Whisper Archive у ведущего: гость играет его оттуда (core/archive.js смотрит waShared),
+  // даже если в его собственном архиве такого трека нет. Сервер пускает к файлу участников комнаты, пока он играет.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const roomEntity = (r, extra) => W.to("track", { ...fromRoomTrack(r), ...(UUID.test(String(r?.archiveId || "")) ? { waShared: String(r.archiveId) } : {}), ...extra });
+  const archiveIdOf = (t) => {
+    const a = W.modules.archive;
+    if (!a?.enabled?.()) return null;
+    try { const id = a.lookup(t)?.id; return UUID.test(String(id || "")) ? String(id) : null; } catch { return null; }
+  };
   const curTrack = () => P.state().track;
   const account = () => W.provider()?.accountLabel || "аккаунта";
 
@@ -92,8 +106,10 @@
     const ps = P.state(), md = P.media(), t = ps.track;
     if (!t) return null;
     const pos = md.startAt != null ? md.startAt : ps.position;
+    const track = toRoomTrack(t), wa = archiveIdOf(t);
+    if (wa) track.archiveId = wa;
     return {
-      track: toRoomTrack(t),
+      track,
       positionMs: Math.max(0, pos * 1000),
       playing: !md.loading && !md.paused,
       rate: ps.rate > 0 ? ps.rate : 1,
@@ -101,6 +117,9 @@
   }
   function hostPush(force) {
     if (!inRoom() || !isHost()) return;
+    // ведущий вернулся после перезагрузки окна: пока трек комнаты у него не заиграл, гостям ничего не шлём —
+    // иначе они получили бы «пауза» (плеер после перезагрузки стоит) и остановились бы
+    if (resumeUntil > Date.now()) return;
     const s = hostState();
     if (!s) return;
     const key = JSON.stringify({ ...s, positionMs: 0 });
@@ -158,7 +177,7 @@
   // у этого клиента трек реально заиграл (report({ audible }) — событие «audible»)
   W.on("audible", () => {
     if (!inRoom()) return;
-    if (isHost()) { hostPush(true); return; }        // гостям — «играет» с точной позицией, как только звук пошёл
+    if (isHost()) { resumeUntil = 0; hostPush(true); return; }        // гостям — «играет» с точной позицией, как только звук пошёл
     if (follow) setTimeout(() => guestApply(500), 120);     // догнать ведущего на время своей загрузки
   });
 
@@ -294,8 +313,10 @@
     paint();
   }
 
-  function start(snap) {
-    room = snap; code = snap.code; follow = true; hostLast = "";
+  // restored — возврат после перезагрузки окна: гость, который «слушал своё», так и остаётся отошедшим
+  function start(snap, restored = false) {
+    room = snap; code = snap.code; hostLast = "";
+    if (!restored) follow = true;
     seenSug.clear(); taken.clear();
     for (const s of snap.suggestions || []) if (s?.id) seenSug.add(s.id);
     offset = (snap.serverNow || Date.now()) - Date.now();
@@ -310,7 +331,8 @@
   function gone(msg) {
     pollGen++;
     const wasGuest = room && !room.isHost;
-    room = null; code = ""; follow = true;
+    room = null; code = ""; follow = true; resumeUntil = 0;
+    unkeep();
     document.body.classList.remove("in-room", "room-guest");
     if (wasGuest && mySpeed != null) P.setRate(mySpeed);
     mySpeed = null;
@@ -666,6 +688,7 @@
   }
 
   function paint() {
+    keep();                          // код, роль и «следует за ведущим» — на случай перезагрузки окна
     // кнопка в плеере: подсвечена в комнате, на ней — сколько слушают
     const b = btn;
     if (b) {
@@ -698,8 +721,51 @@
     btn.innerHTML = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="9" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 19c.6-3.3 3-5 6-5s5.4 1.7 6 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M15.5 5.3a3 3 0 0 1 0 5.4M18 13.6c1.6.7 2.7 2.4 3 5.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
     btn.onclick = open;
   }
-  // окно закрывается — комнату не бросаем: ведущий продолжает раздавать, гость — слушать
-  window.addEventListener("beforeunload", () => { if (inRoom()) call("POST", `/api/rooms/${code}/leave`).catch(() => {}); });
+  // Окно перезагружается (или закрывается) — из комнаты НЕ выходим: раньше здесь уходил leave, и после F5 ведущий
+  // закрывал комнату для всех, а гость из неё выпадал. Код запоминаем — после перезагрузки restore() вернёт в комнату.
+  // Если приложение закрыли совсем, сервер сам уберёт участника по тишине.
+  window.addEventListener("beforeunload", keep);
+
+  // ---------- возврат в комнату после перезагрузки окна ----------
+  async function restore() {
+    let saved = null;
+    try { saved = JSON.parse(sessionStorage.getItem(KEEP_KEY) || "null"); } catch {}
+    if (!saved || inRoom()) return;
+    const c = String(saved.code || "").toUpperCase();
+    // ведущего сервер держит 120 с, гостя — 75 с: позже комнаты (или места в ней) уже нет
+    if (!/^[A-Z0-9]{4,12}$/.test(c) || !(Date.now() - (+saved.at || 0) < 10 * 60 * 1000)) return unkeep();
+    let snap = null;
+    try { snap = await req("GET", `/api/rooms/${c}`, null, null); }
+    catch (e) {
+      if (e.status === 404) { unkeep(); return showToast(`Комната ${c} уже закрыта`, 3500); }
+      // 403 — сервер успел убрать нас из участников: просто входим снова
+      try { snap = await req("POST", `/api/rooms/${c}/join`); }
+      catch (e2) { if (e2.status === 404) unkeep(); return showToast(`Не удалось вернуться в комнату ${c}: ${e2.message}`, 5000); }
+    }
+    if (!snap?.code || snap.closed || inRoom()) return;
+    if (!snap.isHost && saved.follow === false) follow = false;
+    const pb = snap.playback;
+    if (snap.isHost && pb?.track) {
+      // ведущий: продолжаем то, что слушала комната, с нужного места; пока не заиграет — гостям ничего не шлём
+      offset = (snap.serverNow || Date.now()) - Date.now();
+      const at = Math.max(0, (pb.positionMs + (pb.playing ? (nowSrv() - pb.at) * (pb.rate || 1) : 0)) / 1000);
+      if (pb.playing) resumeUntil = Date.now() + 15000;
+      const t = curTrack(), md = P.media();
+      try {
+        if (t && t.id === String(pb.track.id) && md.pending) await P.reload(at, !pb.playing);
+        else if (!t || t.id !== String(pb.track.id) || md.pending) await P.playTrack(roomEntity(pb.track), { at, hold: !pb.playing, context: "room" });
+      } catch { resumeUntil = 0; }
+    }
+    start(snap, true);
+    showToast(snap.isHost ? `Комната ${c} снова с тобой — ты ведущий` : `Ты снова в комнате ${c}`, 3000, { kind: "ok" });
+  }
+  // ждём, пока приложение поднимет плеер (после перезагрузки в нём снова появляется последний трек), но не дольше 6 с
+  (async () => {
+    try { if (!sessionStorage.getItem(KEEP_KEY)) return; } catch { return; }
+    for (let i = 0; i < 30 && !curTrack(); i++) await new Promise((r) => setTimeout(r, 200));
+    await new Promise((r) => setTimeout(r, 300));
+    restore().catch(() => {});
+  })();
   function info() { return inRoom() ? { code, host: isHost(), follow } : null; }
   // событие «room»: { inRoom, code, host, follow, roleChanged? } — всегда объект, и в комнате, и без неё
   function roomEvent() { return { inRoom: inRoom(), code: code || null, host: isHost(), follow, ...(info() || {}) }; }

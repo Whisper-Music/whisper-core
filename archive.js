@@ -232,13 +232,21 @@
     id: "archive", name: "Whisper Archive", priority: 10,
     async resolve(t, next) {
       badge(false);
-      if (!st.on || !st.hasToken || !t) return null;
+      if (!st.hasToken || !t) return null;
+      // waShared — трек из архива ведущего «Слушать вместе» (core/together.js): играет и у гостя без своей копии
+      // и даже с выключенной настройкой (комнаты и так работают только через архив). Своя копия — главнее.
+      const shared = UUID.test(String(t.waShared || "")) ? String(t.waShared) : null;
+      if (!st.on && !shared) return null;
       try {
-        await ensureIndex();
-        const hit = lookup(t);
-        prefetch(next);
-        return hit ? { id: hit.i, url: STREAM_BASE + "track/" + hit.i, blob: () => getBlob(hit.i) } : null;
-      } catch { return null; }
+        let id = null;
+        if (st.on) {
+          await ensureIndex();
+          id = lookup(t)?.i || null;
+          prefetch(next);
+        }
+        id = id || shared;
+        return id ? { id, url: STREAM_BASE + "track/" + id, blob: () => getBlob(id) } : null;
+      } catch { return shared ? { id: shared, url: STREAM_BASE + "track/" + shared, blob: () => getBlob(shared) } : null; }
     },
   });
   // Метка — маленькая печать со значком архива на углу обложки в плеере: место у названия и автора не занимает.
