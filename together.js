@@ -327,11 +327,13 @@
     pollLoop(gen);
     if (isHost()) hostPush(true); else guestApply();
     paint();
+    setTimeout(() => { if (gen === pollGen) checkPing(false); }, 2000);   // свой пинг — серверу сразу, остальным видно
   }
   function gone(msg) {
     pollGen++;
     const wasGuest = room && !room.isHost;
     room = null; code = ""; follow = true; resumeUntil = 0;
+    myPing = 0; pingSrv = null; pingShowUntil = 0; pingErr = ""; loadChecked = ""; clearTimeout(pingHideTimer);
     unkeep();
     document.body.classList.remove("in-room", "room-guest");
     if (wasGuest && mySpeed != null) P.setRate(mySpeed);
@@ -464,6 +466,121 @@
     },
   });
 
+  // ---------- пинг участников (только в комнате) ----------
+  // Пинг — время ответа сервера комнат этому клиенту (Rust: wa_room_ping, лучший из трёх запросов). Свой пинг клиент
+  // отправляет серверу (POST /api/rooms/{code}/ping {pingMs}), сервер отдаёт его в members[].pingMs (+ pingAt) — так видно
+  // и чужой. Сервер без /ping (404/405) — показываем только свой. До 100 мс — норма, 100–199 — жёлтый, от 200 — красный.
+  // Показывается по кнопке (окно комнаты, клик по ярлыку пинга) и сам, если трек у этого клиента долго грузится.
+  const PING_WARN = 100, PING_BAD = 200, PING_STALE = 120000;
+  const pingLevel = (ms) => !(ms > 0) ? "" : ms >= PING_BAD ? "bad" : ms >= PING_WARN ? "warn" : "ok";
+  let myPing = 0;                 // свой пинг, мс (0 — ещё не мерили)
+  let pingBusy = false;
+  let pingSrv = null;             // сервер раздаёт пинг участников: null — неизвестно, true / false
+  let pingShowUntil = 0;          // до какого момента пинг виден в плеере
+  let pingHideTimer = 0;
+  let pingErr = "";
+  const memberPing = (m) => {
+    if (m?.isMe) return myPing;
+    const ms = +(m?.pingMs ?? m?.ping ?? 0);
+    if (!(ms > 0)) return 0;
+    if (m.pingAt && nowSrv() - +m.pingAt > PING_STALE) return 0;      // давно не обновлялся — не показываем
+    return ms;
+  };
+  const pingShown = () => inRoom() && (pingBusy && pingShowUntil > 0 || Date.now() < pingShowUntil);
+  const pingProblems = () => (room?.members || []).filter((m) => !m.isMe && pingLevel(memberPing(m)) && pingLevel(memberPing(m)) !== "ok");
+
+  // show — вывести результат в плеер; без него только замер и отправка серверу (фоновое обновление для остальных)
+  async function checkPing(show = true) {
+    if (!inRoom() || pingBusy) return;
+    pingBusy = true; pingErr = "";
+    const c = code;
+    if (show) { clearTimeout(pingHideTimer); pingShowUntil = Date.now() + 60000; paintPing(); }
+    try {
+      const r = await invoke("wa_room_ping", { code: c, report: pingSrv !== false });
+      if (c !== code) return;
+      if (r.status === 404) return gone("Комната закрыта");
+      if (r.ms > 0) myPing = r.ms;
+      const rp = r.report;
+      if (rp) {
+        if ([404, 405, 501].includes(rp.status)) pingSrv = false;
+        else if (rp.status >= 200 && rp.status < 300) {
+          pingSrv = true;
+          // сервер вернул участников — сразу берём их пинг, не дожидаясь следующего снимка
+          try { const s = JSON.parse(rp.body || "null"); if (room && Array.isArray(s?.members)) room.members = s.members; } catch {}
+        }
+      }
+    } catch (e) {
+      pingErr = String(e?.message || e || "нет связи");
+    } finally {
+      pingBusy = false;
+      if (show) {
+        // есть проблемы — дольше на экране, всё в порядке — ненадолго
+        const bad = pingLevel(myPing) !== "ok" || pingProblems().length > 0;
+        pingShowUntil = Date.now() + (bad ? 30000 : 12000);
+        clearTimeout(pingHideTimer);
+        pingHideTimer = setTimeout(paintPing, pingShowUntil - Date.now() + 50);
+      }
+      paintPing();
+      if (panel) paint();
+    }
+  }
+  // фон: свой пинг серверу раз в 30 с — чтобы у остальных он был свежим, когда они проверят
+  // (и в свёрнутом окне: музыку часто слушают свернув, а пинг такого участника тоже нужен остальным)
+  setInterval(() => { if (inRoom() && pingSrv !== false) checkPing(false); }, 30000);
+  // трек у этого клиента грузится дольше 3 с — проверить и показать пинг (один раз на трек)
+  let loadSince = 0, loadKey = "", loadChecked = "";
+  setInterval(() => {
+    if (!inRoom()) { loadSince = 0; return; }
+    const md = P.media(), t = curTrack();
+    if (!md.loading || !t) { loadSince = 0; return; }
+    const key = String(t.id);
+    if (key !== loadKey || !loadSince) { loadKey = key; loadSince = Date.now(); }
+    if (Date.now() - loadSince > 3000 && loadChecked !== key) { loadChecked = key; checkPing(true); }
+  }, 500);
+
+  // строка пинга в плеере: рядом с ярлыком комнаты, в потоке — ничего не перекрывает
+  let pingEl = null;
+  function paintPing() {
+    if (!pingEl) {
+      pingEl = el("div", "roompings");
+      pingEl.setAttribute("role", "button"); pingEl.tabIndex = 0;
+      pingEl.title = "Пинг до сервера комнат — нажми, чтобы проверить ещё раз";
+      const again = (e) => { e?.preventDefault(); e?.stopPropagation(); checkPing(true); };
+      pingEl.addEventListener("click", again);
+      pingEl.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") again(e); });
+    }
+    const line = tab?.parentNode;
+    if (!pingShown() || !line) { pingEl.remove(); return; }
+    if (pingEl.parentNode !== line) line.append(pingEl);
+    pingEl.textContent = "";
+    pingEl.classList.toggle("busy", pingBusy);
+    const chip = (name, ms) => {
+      const lv = pingLevel(ms);
+      const c = el("span", "rpchip " + (lv || "none"));
+      c.append(el("i", "rpdot"), el("span", "rpname", name), el("b", "", ms > 0 ? `${ms} мс` : "—"));
+      return c;
+    };
+    if (pingBusy && !myPing) { pingEl.append(el("span", "rpchip none", "пинг…")); return; }
+    if (pingErr && !myPing) { pingEl.append(el("span", "rpchip bad", "нет связи")); return; }
+    pingEl.append(chip("ты", myPing));
+    // чужой пинг — только жёлтый и красный, чтобы строка не разрасталась; у остальных всё в порядке — «✓»
+    const others = (room.members || []).filter((m) => !m.isMe);
+    const probs = pingProblems().sort((a, b) => memberPing(b) - memberPing(a));
+    for (const m of probs.slice(0, 3)) pingEl.append(chip(String(m.nickname || "Гость"), memberPing(m)));
+    if (probs.length > 3) pingEl.append(el("span", "rpchip more", `+${probs.length - 3}`));
+    if (!probs.length && others.some((m) => memberPing(m) > 0)) pingEl.append(el("span", "rpchip ok rpall", "у остальных ✓"));
+    if (pingSrv === false && others.length) pingEl.title = "Свой пинг. Пинг остальных сервер комнат пока не передаёт";
+    else pingEl.title = "Пинг до сервера комнат — нажми, чтобы проверить ещё раз";
+  }
+  // значок пинга у участника в окне комнаты
+  function pingBadge(m) {
+    const ms = memberPing(m);
+    if (!(ms > 0)) return null;
+    const b = el("span", "rmping " + pingLevel(ms), `${ms} мс`);
+    b.title = "Пинг до сервера комнат";
+    return b;
+  }
+
   // ---------- окно «Слушать вместе» ----------
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   function setStatus(t) { const s = panel && $t(".rmstatus", panel.box); if (s) s.textContent = t || ""; }
@@ -535,6 +652,16 @@
     const btns = el("div", "rmcodebtns"); btns.append(lk, cp);
     c.append(el("span", "", "Код комнаты"), big, btns);
     box.append(c);
+    // пинг: свой + кнопка проверки (пинг каждого — в списке участников слева)
+    const pr = el("div", "rmpingrow");
+    const plv = pingLevel(myPing);
+    const val = el("b", "rmping " + (plv || "none"), pingBusy ? "проверка…" : myPing > 0 ? `${myPing} мс` : pingErr ? "нет связи" : "не проверен");
+    const lab = el("span", "", "Твой пинг");
+    lab.title = `До ${PING_WARN} мс — норма, ${PING_WARN}–${PING_BAD - 1} — средний, от ${PING_BAD} — высокий` + (pingSrv === false ? ". Пинг остальных сервер комнат пока не передаёт" : "");
+    const chk = el("button", "nav", "Проверить пинг"); chk.type = "button"; chk.disabled = pingBusy;
+    chk.onclick = () => checkPing(true);
+    pr.append(lab, val, chk);
+    box.append(pr);
     // что играет
     const pb = room.playback;
     if (pb) {
@@ -607,6 +734,8 @@
     const tx = el("span", "rmpname");
     tx.append(el("b", "", name), el("small", "", m.isHost ? (m.isMe ? "ведущий · это ты" : "ведущий · управляет музыкой") : (m.isMe ? "это ты" : "слушает")));
     row.append(av, tx);
+    const pb = pingBadge(m);
+    if (pb) row.append(pb);
     return { row, target: sel ? m : null };
   }
 
@@ -657,6 +786,7 @@
   // Ярлык — не <button>: на кнопки внутри .player действует «.player button { 38×38, круг }», из-за чего
   // ярлык сжимался в кружок и клик по нему не срабатывал. Живёт в потоке под названием трека — ничего не перекрывает.
   let tab = null;
+  let tabLine = null;             // строка под названием трека: ярлык комнаты + пинг (paintPing)
   function tabClick(e) {
     e?.preventDefault(); e?.stopPropagation();
     if (!inRoom()) return;
@@ -664,17 +794,20 @@
   }
   function paintTab() {
     const meta = roleEl("player.info");                // под названием и исполнителем в плеере
-    if (!inRoom()) { tab?.remove(); tab = null; document.body.classList.remove("room-away"); return; }
+    if (!inRoom()) { tabLine?.remove(); tabLine = null; tab = null; document.body.classList.remove("room-away"); paintPing(); return; }
     if (!tab && meta) {
+      tabLine = el("div", "roomline");
       tab = el("div", "roomtab");
       tab.setAttribute("role", "button"); tab.tabIndex = 0;
       tab.addEventListener("click", tabClick);
       tab.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") tabClick(e); });
+      tabLine.append(tab);
     }
-    if (tab && meta && tab.parentNode !== meta) meta.append(tab);
+    if (tabLine && meta && tabLine.parentNode !== meta) meta.append(tabLine);
     const away = !isHost() && !follow;
     document.body.classList.toggle("room-away", away);
     if (!tab) return;
+    paintPing();
     tab.className = "roomtab" + (isHost() ? " host" : away ? " away" : " guest");
     tab.textContent = "";
     if (away) {
@@ -774,6 +907,7 @@
     wantsPlay,                             // плеер: держать ли трек, загруженный без звука
     take,                                  // плеер: перед следующим треком — поставить предложение («Ставить в очередь»)
     open, create, join, leave, suggest, rejoin,
+    ping: () => checkPing(true),           // проверить пинг и показать его в плеере (только в комнате)
     room: () => (inRoom() ? room : null),
     // кнопки бесконечного потока у гостя (у Whisper Yandex — страница «Моя волна»): центральная — играть/пауза
     // трека комнаты, кнопка станций — окно комнаты

@@ -121,6 +121,63 @@ pub async fn wa_room_transfer(code: String, member_id: String) -> Result<WaRespo
     room_request(true, format!("/api/rooms/{}/host", room_code(&code)?), Some(body), None).await
 }
 
+/// Результат проверки пинга: `ms` — лучшее время ответа сервера комнат из трёх попыток (0 — замерить не удалось),
+/// `status` — HTTP-статус замера (404 — комнаты нет), `report` — ответ сервера на отправку пинга (None — не отправляли).
+#[derive(serde::Serialize)]
+pub struct RoomPing {
+    pub ms: u64,
+    pub status: u16,
+    pub report: Option<WaResponse>,
+}
+
+/// Пинг до сервера комнат: три коротких GET /api/rooms/{code} (без ожидания изменений), берётся лучший —
+/// первый может включать установку соединения. Время меряется здесь, в Rust, без задержек IPC интерфейса.
+/// `report` — отправить результат серверу (POST /api/rooms/{code}/ping {"pingMs"}), чтобы его увидели остальные.
+#[tauri::command]
+pub async fn wa_room_ping(code: String, report: bool) -> Result<RoomPing, String> {
+    let path = format!("/api/rooms/{}", room_code(&code)?);
+    let url = api_url(&path)?;
+    let token = read_token()?;
+    let mut best: Option<u64> = None;
+    let mut status = 0u16;
+    let mut last_err = String::new();
+    for _ in 0..3 {
+        let t = std::time::Instant::now();
+        match json_client()
+            .get(url.clone())
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/json")
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let ms = t.elapsed().as_millis() as u64;
+                status = resp.status().as_u16();
+                let _ = read_limited(resp, MAX_SMALL_BODY).await;
+                if status == 404 || status == 403 {
+                    break;
+                }
+                best = Some(best.map_or(ms, |b| b.min(ms)));
+            }
+            Err(e) => last_err = format!("Whisper Archive недоступен: {e}"),
+        }
+    }
+    let Some(ms) = best else {
+        if status != 0 {
+            return Ok(RoomPing { ms: 0, status, report: None });
+        }
+        return Err(last_err);
+    };
+    let ms = ms.max(1);
+    let report = if report {
+        let body = serde_json::json!({ "pingMs": ms.min(60_000) });
+        room_request(true, format!("{path}/ping"), Some(body), None).await.ok()
+    } else {
+        None
+    };
+    Ok(RoomPing { ms, status, report })
+}
+
 #[cfg(test)]
 mod room_tests {
     use super::*;

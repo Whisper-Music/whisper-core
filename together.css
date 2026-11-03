@@ -37,6 +37,9 @@
 .rmsug.taken { opacity: .55; }
 
 /* ---------- режим комнаты: ярлык под названием трека в плеере (в потоке, ничего не перекрывает) ---------- */
+/* строка: ярлык комнаты + пинг (пинг виден только после проверки и сам прячется) */
+.player .meta .roomline { align-self: flex-start; display: flex; align-items: center; gap: 6px; max-width: 100%; min-width: 0; margin-top: 4px; }
+.player .meta .roomline > .roomtab { flex: 0 1 auto; min-width: 0; margin-top: 0; }
 .player .meta .roomtab {
   align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin-top: 4px;
   padding: 2px 10px; border-radius: 999px; white-space: nowrap; cursor: pointer; user-select: none;
@@ -71,6 +74,43 @@
 :root[data-anim="off"] .roomtab, :root[data-anim="off"] .roomtab .rtdot { animation: none; }
 :root[data-style="royal"] .roomtab, :root[data-style="steam"] .roomtab { border-radius: 3px; }
 :root[data-style="lolitta"] .player .meta .roomtab:not(.away) { color: var(--l-ink, var(--accent)); }
+
+/* ---------- пинг: до 100 мс — зелёный, 100–199 — жёлтый, от 200 — красный ---------- */
+:root { --ping-ok: #4ade80; --ping-warn: #facc15; --ping-bad: #ff5a5f; }
+.player .meta .roompings {
+  flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap;
+  cursor: pointer; user-select: none; animation: rpIn .22s ease-out;
+}
+.player .meta .roompings:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 999px; }
+@keyframes rpIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+.roompings .rpchip {
+  --c: var(--muted); flex: none; display: inline-flex; align-items: center; gap: 4px; max-width: 150px;
+  padding: 2px 8px; border-radius: 999px; font-size: 11px; line-height: 16px; color: var(--c);
+  background: color-mix(in srgb, var(--c) 13%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent);
+}
+.roompings .rpchip.ok { --c: var(--ping-ok); }
+.roompings .rpchip.warn { --c: var(--ping-warn); }
+.roompings .rpchip.bad { --c: var(--ping-bad); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 60%, transparent), 0 0 8px color-mix(in srgb, var(--c) 35%, transparent); }
+.roompings .rpchip .rpname { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .85; }
+.roompings .rpchip b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.roompings .rpdot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--c); box-shadow: 0 0 5px var(--c); }
+.roompings .rpchip.bad .rpdot { animation: rtLive 1s ease-in-out infinite; }
+.roompings.busy .rpchip { opacity: .6; }
+:root[data-style] .player .meta .roompings .rpchip > span, :root[data-style] .player .meta .roompings .rpchip > b { color: inherit; font-size: inherit; }
+:root[data-anim="off"] .roompings, :root[data-anim="off"] .roompings .rpdot { animation: none; }
+:root[data-style="royal"] .roompings .rpchip, :root[data-style="steam"] .roompings .rpchip { border-radius: 3px; }
+/* окно комнаты: свой пинг + кнопка, пинг у участников */
+.rmpingrow { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 10px; font-size: 13px; background: rgba(255,255,255,.06); }
+.rmpingrow > span { color: var(--muted); cursor: help; }
+.rmpingrow .nav { margin-left: auto; }
+.rmping { --c: var(--muted); color: var(--c); font-variant-numeric: tabular-nums; }
+.rmping.ok { --c: var(--ping-ok); } .rmping.warn { --c: var(--ping-warn); } .rmping.bad { --c: var(--ping-bad); }
+.rmpingrow .rmping { font-weight: 700; }
+.rmperson .rmpname { flex: 1; }
+.rmperson > .rmping { flex: none; margin-left: auto; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  background: color-mix(in srgb, var(--c) 13%, transparent); }
+:root[data-style="royal"] .rmpingrow, :root[data-style="steam"] .rmpingrow,
+:root[data-style="royal"] .rmperson > .rmping, :root[data-style="steam"] .rmperson > .rmping { border-radius: 3px; }
 
 /* меню «⋯»: блок комнаты в самом верху */
 .tmenu .mroom {
