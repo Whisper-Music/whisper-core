@@ -235,7 +235,10 @@
       if (!st.hasToken || !t) return null;
       // waShared — трек из архива ведущего «Слушать вместе» (core/together.js): играет и у гостя без своей копии
       // и даже с выключенной настройкой (комнаты и так работают только через архив). Своя копия — главнее.
-      const shared = UUID.test(String(t.waShared || "")) ? String(t.waShared) : null;
+      // Метка лежит в сырых данных трека: приложение кладёт в очередь t.raw, а сущность из него (W.to) собирается заново
+      // по toTrack провайдера — лишних полей вроде waShared там уже нет. Поэтому смотрим и t.raw.
+      const sh = [t.waShared, t.raw?.waShared].find((x) => UUID.test(String(x || "")));
+      const shared = sh ? String(sh) : null;
       if (!st.on && !shared) return null;
       try {
         let id = null;
