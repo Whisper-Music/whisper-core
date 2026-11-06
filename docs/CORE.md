@@ -559,7 +559,20 @@ API для других модулей: `Whisper.modules.archive` — `login(rea
   «✕» — свою или (у ведущего) любую: `wa_room_theme_remove`. До 8 тем и 160 МБ на комнату, файл ≤ 64 МБ; та же тема от того же
   человека заменяет прежнюю; живут, пока открыта комната. Новая чужая тема — подсказка с кнопкой «Установить».
   Нет `themeExport` / `themeImport` у приложения — кнопки неактивны.
-* **Rust:** команды `wa_room_create / get / join / leave / state / suggest / dismiss / transfer / ping / missing` (`whisper::rooms::`),
+* **«Подмигнуть»** — знак участнику без голоса: «😉» у каждого в «Участниках» (и «всем» в заголовке, если слушателей
+  больше одного) → ряд знаков `wink next prev pause play louder quieter like` → `wa_room_wink(code, to?, kind)` →
+  `POST /api/rooms/{code}/wink { to?, kind }` (не чаще раза в 2 с от одного человека, иначе 429). В снимке получателя —
+  `room.winks: [{ id, from, fromId, all, kind, at }]` за последнюю минуту; каждый показывается один раз (по id),
+  те, что были до входа, — нет. Текст рисует получатель (`WINKS` в together.js), сервер передаёт только вид знака.
+  Ведущему на просьбу про музыку в подсказке есть кнопка («Переключить», «На паузу», «Громче»…), кнопка комнаты в плеере
+  коротко подпрыгивает (`.togetherbtn.wink`).
+* **Системные уведомления** — `kit.notify({ kind: "invite" | "wink", title, body })` → Promise<bool>: приглашение
+  друга (`onInvite`) и подмигивание. Показывать ли (выключатели, «только когда окно в фоне») решает приложение;
+  у Whisper Yandex — notify.js + notify.rs (tauri-plugin-notification), настройки «Приложение → Уведомления».
+  Нет `kit.notify` — только подсказка в окне.
+* **Пинг** виден только в окне комнаты (свой — под кодом, у участников — в «Участниках»): в плеере строки пинга нет.
+  Трек долго грузится из-за плохой связи — одна подсказка «Трек грузится долго…» (не чаще раза в 2 минуты).
+* **Rust:** команды `wa_room_create / get / join / leave / state / suggest / dismiss / transfer / ping / missing / wink` (`whisper::rooms::`),
   для кэша комнаты — `upload::begin(None, None)?.to_room_cache(code, TrackFile)` в своей команде приложения
   (у Whisper Yandex — `wa_room_cache_track` в whisper_yandex.rs: скачивает трек с Яндекса и отдаёт в кэш), и
   `room_link_take` + событие `room-link` (deeplink.rs, ссылки `whisper://room/…`).

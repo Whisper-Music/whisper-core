@@ -306,11 +306,33 @@
     return { css: css.length > 1024 * 1024 ? "" : css, settings: s && typeof s === "object" ? s : {} };
   }
 
+  // ---------- интро: «@@ css whisper-intro» и «@@ settings whisper-intro» ----------
+  // Заставка при запуске (как загрузка в ASCII или «ты в сети?» в Madk1d). Отдельной секцией, а не в CSS приложения,
+  // чтобы её можно было выключить: приложение подключает этот CSS только на время интро (duration) и убирает —
+  // анимации запускаются, когда правила появляются. Пишется так же, как CSS приложения (привязка к стилю — scopeCss),
+  // обычно это body::before / body::after поверх окна (pointer-events: none). Нет секции — у темы нет интро.
+  // settings: { "name": "Загрузка ASCII", "duration": 2.2 } — длительность в секундах (0.3…10, по умолчанию 3).
+  const INTRO = "whisper-intro";
+  function introInfo(th) {
+    if (!(th.css(INTRO) || "").trim()) return null;
+    const s = th.settings(INTRO) || {};
+    const d = typeof s.duration === "number" && isFinite(s.duration) ? Math.min(10, Math.max(0.3, s.duration)) : 3;
+    const name = typeof s.name === "string" ? s.name.replace(/[\u0000-\u001f]/g, "").trim().slice(0, 40) : "";
+    return { name, duration: d };
+  }
+  function introCss(th, id, opts = {}) {
+    const info = introInfo(th);
+    if (!info) return null;
+    const urls = [];
+    const css = withAssets(th.css(INTRO), th, (a) => { const u = URL.createObjectURL(new Blob([a.bytes], { type: a.mime })); urls.push(u); return u; });
+    return { css: scopeCss(css, id, new Set(urls), opts), urls, ...info };
+  }
+
   const CORE = "whisper-core", OBS = "whisper-obs";
   const api = {
-    VERSION: "0.1.0", CORE, OBS,
+    VERSION: "0.1.0", CORE, OBS, INTRO,
     splitTop, cssParse, ruleText, splitDecls, unesc, cssSafe, scopeSel, scopeCss, extractFrom,
-    cssVal, tokensCss, withAssets, themeCss, obsCss,
+    cssVal, tokensCss, withAssets, themeCss, obsCss, introInfo, introCss,
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.WhisperThemeCss = Object.freeze(api);

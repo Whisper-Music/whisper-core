@@ -112,6 +112,25 @@ pub async fn wa_room_missing(code: String, track_id: String) -> Result<WaRespons
     room_request(true, format!("/api/rooms/{}/missing", room_code(&code)?), Some(body), None).await
 }
 
+/// «Подмигнуть» участнику (`to` — его id) или всем (`to` нет): знак из списка — «переключи», «сделай тише»…
+/// (POST /api/rooms/{code}/wink). Текст и значок рисует клиент получателя, сервер передаёт только вид знака.
+#[tauri::command]
+pub async fn wa_room_wink(code: String, to: Option<String>, kind: String) -> Result<WaResponse, String> {
+    if !is_wink_kind(&kind) {
+        return Err("Неизвестный знак".into());
+    }
+    if let Some(t) = &to {
+        if !is_uuid(t) {
+            return Err("Некорректный участник".into());
+        }
+    }
+    let body = serde_json::json!({ "to": to, "kind": kind });
+    room_request(true, format!("/api/rooms/{}/wink", room_code(&code)?), Some(body), None).await
+}
+fn is_wink_kind(k: &str) -> bool {
+    matches!(k, "wink" | "next" | "prev" | "pause" | "play" | "louder" | "quieter" | "like")
+}
+
 // ---------- друзья и приглашения ----------
 // Друзья — те, с кем уже слушал в одной комнате (сервер запоминает при входе). Их можно позвать в свою комнату:
 // у друга приложение ждёт приглашений (wa_room_invites с since — long-poll) и показывает уведомление.
@@ -376,5 +395,6 @@ mod room_tests {
         assert_eq!(pct_decode("%D0%9C%D0%B5%D0%BB%20x"), "Мел x");
         assert_eq!(pct_decode("50%"), "50%");
         assert_eq!(pct_decode("%zz"), "%zz");
+        assert!(is_wink_kind("next") && is_wink_kind("wink") && !is_wink_kind("") && !is_wink_kind("NEXT") && !is_wink_kind("hello"));
     }
 }

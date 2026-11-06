@@ -441,7 +441,7 @@
     if (wasHost !== null && wasHost !== isHost()) roleChanged();
     if (!isHost() && JSON.stringify(snap.playback || null) !== prevPb) guestApply();
     if (isHost()) { onSuggestions(); onMissingHost(); }
-    onThemes();
+    onThemes(); onWinks();
     // в комнате кто-то новый — он теперь в друзьях (сервер записал при его входе)
     if ((snap.members || []).some((m) => !m.isMe && memberId(m) != null && !friends.some((f) => String(f.id) === String(memberId(m))))) {
       setTimeout(() => loadFriends(), 1500);
@@ -563,7 +563,8 @@
     room = null; code = ""; follow = true; resumeUntil = 0;
     guestFor = null; missingNote = ""; shareAsked = ""; roomShared.clear();
     invited.clear(); themesSeen.clear(); themesInstalled.clear(); themesPrimed = false;   // «Позван» и темы — только про ту комнату
-    myPing = 0; pingSrv = null; pingShowUntil = 0; pingErr = ""; loadChecked = ""; clearTimeout(pingHideTimer);
+    winksSeen.clear(); winksPrimed = false; winkFor = null;
+    myPing = 0; pingSrv = null; pingErr = ""; loadChecked = "";
     unkeep();
     document.body.classList.remove("in-room", "room-guest");
     if (wasGuest && mySpeed != null) P.setRate(mySpeed);
@@ -707,6 +708,8 @@
     if (inRoom() && code === inv.code) return;
     const who = String(inv.from || "Друг").slice(0, 40);
     showToast(`${who} зовёт слушать вместе`, 15000, { action: { label: "Войти", fn: () => offerJoin(inv.code) } });
+    // окно свёрнуто или в фоне — ещё и системное уведомление (включается в настройках приложения)
+    kit.notify?.({ kind: "invite", title: "Слушать вместе", body: `${who} зовёт тебя в комнату ${inv.code}` });
     // окно свёрнуто или в фоне — мигнуть значком на панели задач
     if (!document.hasFocus()) {
       try { window.__TAURI__?.window?.getCurrentWindow?.().requestUserAttention(2)?.catch?.(() => {}); } catch {}
@@ -802,14 +805,13 @@
   // Пинг — время ответа сервера комнат этому клиенту (Rust: wa_room_ping, лучший из трёх запросов). Свой пинг клиент
   // отправляет серверу (POST /api/rooms/{code}/ping {pingMs}), сервер отдаёт его в members[].pingMs (+ pingAt) — так видно
   // и чужой. Сервер без /ping (404/405) — показываем только свой. До 100 мс — норма, 100–199 — жёлтый, от 200 — красный.
-  // Показывается по кнопке (окно комнаты, клик по ярлыку пинга) и сам, если трек у этого клиента долго грузится.
+  // Виден только в окне «Слушать вместе» (свой — под кодом, у каждого — в «Участниках»): в плеере строка пинга
+  // не помещалась и пряталась под кнопками. Трек у этого клиента долго грузится из-за связи — короткая подсказка.
   const PING_WARN = 100, PING_BAD = 200, PING_STALE = 120000;
   const pingLevel = (ms) => !(ms > 0) ? "" : ms >= PING_BAD ? "bad" : ms >= PING_WARN ? "warn" : "ok";
   let myPing = 0;                 // свой пинг, мс (0 — ещё не мерили)
   let pingBusy = false;
   let pingSrv = null;             // сервер раздаёт пинг участников: null — неизвестно, true / false
-  let pingShowUntil = 0;          // до какого момента пинг виден в плеере
-  let pingHideTimer = 0;
   let pingErr = "";
   const memberPing = (m) => {
     if (m?.isMe) return myPing;
@@ -818,15 +820,15 @@
     if (m.pingAt && nowSrv() - +m.pingAt > PING_STALE) return 0;      // давно не обновлялся — не показываем
     return ms;
   };
-  const pingShown = () => inRoom() && (pingBusy && pingShowUntil > 0 || Date.now() < pingShowUntil);
   const pingProblems = () => (room?.members || []).filter((m) => !m.isMe && pingLevel(memberPing(m)) && pingLevel(memberPing(m)) !== "ok");
 
-  // show — вывести результат в плеер; без него только замер и отправка серверу (фоновое обновление для остальных)
-  async function checkPing(show = true) {
+  // slow — замер из-за того, что трек долго грузится: плохая связь — подсказка (раз в 2 минуты, не чаще)
+  let slowNoteAt = 0;
+  async function checkPing(slow = false) {
     if (!inRoom() || pingBusy) return;
     pingBusy = true; pingErr = "";
     const c = code;
-    if (show) { clearTimeout(pingHideTimer); pingShowUntil = Date.now() + 60000; paintPing(); }
+    if (panel) paint();
     try {
       const r = await invoke("wa_room_ping", { code: c, report: pingSrv !== false });
       if (c !== code) return;
@@ -845,14 +847,14 @@
       pingErr = String(e?.message || e || "нет связи");
     } finally {
       pingBusy = false;
-      if (show) {
-        // есть проблемы — дольше на экране, всё в порядке — ненадолго
-        const bad = pingLevel(myPing) !== "ok" || pingProblems().length > 0;
-        pingShowUntil = Date.now() + (bad ? 30000 : 12000);
-        clearTimeout(pingHideTimer);
-        pingHideTimer = setTimeout(paintPing, pingShowUntil - Date.now() + 50);
+      if (slow && inRoom() && Date.now() - slowNoteAt > 120000) {
+        const lv = pingErr && !myPing ? "bad" : pingLevel(myPing);
+        if (lv === "bad" || lv === "warn") {
+          slowNoteAt = Date.now();
+          showToast(myPing > 0 ? `Трек грузится долго: пинг до сервера комнат ${myPing} мс` : "Трек грузится долго: нет связи с сервером комнат", 6000,
+            { action: { label: "Подробнее", fn: () => { if (!panel) open(); } } });
+        }
       }
-      paintPing();
       if (panel) paint();
     }
   }
@@ -870,40 +872,80 @@
     if (Date.now() - loadSince > 3000 && loadChecked !== key) { loadChecked = key; checkPing(true); }
   }, 500);
 
-  // строка пинга в плеере: рядом с ярлыком комнаты, в потоке — ничего не перекрывает
-  let pingEl = null;
-  function paintPing() {
-    if (!pingEl) {
-      pingEl = el("div", "roompings");
-      pingEl.setAttribute("role", "button"); pingEl.tabIndex = 0;
-      pingEl.title = "Пинг до сервера комнат — нажми, чтобы проверить ещё раз";
-      const again = (e) => { e?.preventDefault(); e?.stopPropagation(); checkPing(true); };
-      pingEl.addEventListener("click", again);
-      pingEl.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") again(e); });
-    }
-    const line = tab?.parentNode;
-    if (!pingShown() || !line) { pingEl.remove(); return; }
-    if (pingEl.parentNode !== line) line.append(pingEl);
-    pingEl.textContent = "";
-    pingEl.classList.toggle("busy", pingBusy);
-    const chip = (name, ms) => {
-      const lv = pingLevel(ms);
-      const c = el("span", "rpchip " + (lv || "none"));
-      c.append(el("i", "rpdot"), el("span", "rpname", name), el("b", "", ms > 0 ? `${ms} мс` : "—"));
-      return c;
-    };
-    if (pingBusy && !myPing) { pingEl.append(el("span", "rpchip none", "пинг…")); return; }
-    if (pingErr && !myPing) { pingEl.append(el("span", "rpchip bad", "нет связи")); return; }
-    pingEl.append(chip("ты", myPing));
-    // чужой пинг — только жёлтый и красный, чтобы строка не разрасталась; у остальных всё в порядке — «✓»
-    const others = (room.members || []).filter((m) => !m.isMe);
-    const probs = pingProblems().sort((a, b) => memberPing(b) - memberPing(a));
-    for (const m of probs.slice(0, 3)) pingEl.append(chip(String(m.nickname || "Гость"), memberPing(m)));
-    if (probs.length > 3) pingEl.append(el("span", "rpchip more", `+${probs.length - 3}`));
-    if (!probs.length && others.some((m) => memberPing(m) > 0)) pingEl.append(el("span", "rpchip ok rpall", "у остальных ✓"));
-    if (pingSrv === false && others.length) pingEl.title = "Свой пинг. Пинг остальных сервер комнат пока не передаёт";
-    else pingEl.title = "Пинг до сервера комнат — нажми, чтобы проверить ещё раз";
+  // ---------- «Подмигнуть»: знак участнику без голоса ----------
+  // Гость просит ведущего переключить трек, ведущий зовёт всех послушать… Сервер передаёт только вид знака из списка
+  // (POST /api/rooms/{code}/wink), текст рисует получатель — чужой текст сюда не попадает. Знаки живут минуту,
+  // каждый показывается один раз (по id). Ведущему с просьбой про музыку — кнопка, чтобы сразу сделать.
+  const WINKS = {
+    wink: { icon: "😉", label: "Подмигнуть", text: "подмигивает тебе" },
+    next: { icon: "⏭", label: "Дальше", text: "просит переключить трек" },
+    prev: { icon: "⏮", label: "Верни", text: "просит вернуть прошлый трек" },
+    pause: { icon: "⏸", label: "Пауза", text: "просит поставить на паузу" },
+    play: { icon: "▶", label: "Включи", text: "просит включить музыку" },
+    louder: { icon: "🔊", label: "Громче", text: "просит сделать погромче" },
+    quieter: { icon: "🔉", label: "Тише", text: "просит сделать потише" },
+    like: { icon: "❤", label: "Класс", text: "— классный трек!" },
+  };
+  const WINK_ORDER = ["wink", "next", "prev", "pause", "play", "louder", "quieter", "like"];
+  const winksSeen = new Set();
+  let winksPrimed = false, winkFor = null, winkBusy = false;    // winkFor: кому открыт выбор знака (id или "*" — всем)
+  const vol = () => { const v = +(P.state?.()?.volume ?? NaN); return isFinite(v) ? v : 0.5; };
+  // что ведущий может сделать в ответ одной кнопкой
+  const WINK_DO = {
+    next: ["Переключить", () => P.next()],
+    prev: ["Вернуть", () => P.prev()],
+    pause: ["На паузу", () => P.pause()],
+    play: ["Включить", () => P.play()],
+    louder: ["Громче", () => P.setVolume(vol() + 0.1)],
+    quieter: ["Тише", () => P.setVolume(vol() - 0.1)],
+  };
+  async function sendWink(to, kind) {
+    if (!inRoom() || winkBusy || !WINKS[kind]) return;
+    winkBusy = true;
+    try {
+      await cmd("wa_room_wink", { code, to: to == null ? null : String(to), kind });
+      const who = to == null ? "всем" : String((room.members || []).find((m) => String(memberId(m)) === String(to))?.nickname || "участнику");
+      showToast(`${WINKS[kind].icon} ${WINKS[kind].label} — ${who}`, 2200, { kind: "ok" });
+      winkFor = null;
+    } catch (e) {
+      showToast(e?.status === 429 ? "Не так часто — подожди пару секунд" : "Не удалось подмигнуть: " + (e?.message || e), 3500, { kind: "err" });
+    } finally { winkBusy = false; if (panel) paint(); }
   }
+  // подмигнули мне: подсказка, мигание кнопки комнаты и (окно в фоне) системное уведомление
+  function onWinks() {
+    const list = (Array.isArray(room?.winks) ? room.winks : []).filter((w) => w?.id && WINKS[w.kind]);
+    if (!winksPrimed) { winksPrimed = true; for (const w of list) winksSeen.add(String(w.id)); return; }  // до входа — не показываем
+    for (const w of list) {
+      const id = String(w.id);
+      if (winksSeen.has(id)) continue;
+      winksSeen.add(id);
+      const k = WINKS[w.kind], who = String(w.from || "Участник").slice(0, 40);
+      const text = `${who} ${k.text}${w.all ? " (всем)" : ""}`;
+      const act = isHost() && WINK_DO[w.kind] ? { label: WINK_DO[w.kind][0], fn: WINK_DO[w.kind][1] } : null;
+      showToast(`${k.icon} ${text}`, 7000, act ? { action: act } : {});
+      if (btn) { btn.classList.remove("wink"); void btn.offsetWidth; btn.classList.add("wink"); setTimeout(() => btn?.classList.remove("wink"), 3200); }
+      kit.notify?.({ kind: "wink", title: `${k.icon} Слушать вместе`, body: text });
+    }
+  }
+  // выбор знака: ряд кнопок под участником (или под «Всем»)
+  function winkPicker(to) {
+    const box = el("div", "rmwinks");
+    for (const kind of WINK_ORDER) {
+      const k = WINKS[kind];
+      const b = el("button", "rmwinkb", k.icon); b.type = "button"; b.title = k.label; b.disabled = winkBusy;
+      b.setAttribute("aria-label", k.label);
+      b.onclick = (e) => { e.stopPropagation(); sendWink(to, kind); };
+      box.append(b);
+    }
+    return box;
+  }
+  function winkButton(key, title) {
+    const b = el("button", "rmwinkbtn" + (winkFor === key ? " on" : ""), "😉"); b.type = "button"; b.title = title;
+    b.setAttribute("aria-expanded", String(winkFor === key));
+    b.onclick = (e) => { e.stopPropagation(); winkFor = winkFor === key ? null : key; paint(); };
+    return b;
+  }
+
   // значок пинга у участника в окне комнаты
   function pingBadge(m) {
     const ms = memberPing(m);
@@ -1159,7 +1201,7 @@
     const lab = el("span", "", "Твой пинг");
     lab.title = `До ${PING_WARN} мс — норма, ${PING_WARN}–${PING_BAD - 1} — средний, от ${PING_BAD} — высокий` + (pingSrv === false ? ". Пинг остальных сервер комнат пока не передаёт" : "");
     const chk = el("button", "nav", "Проверить пинг"); chk.type = "button"; chk.disabled = pingBusy;
-    chk.onclick = () => checkPing(true);
+    chk.onclick = () => checkPing();
     pr.append(lab, val, chk);
     box.append(pr);
     // что играет
@@ -1247,11 +1289,13 @@
     const id = memberId(m);
     const canPick = isHost() && !m.isMe && !m.isHost && id != null;      // ведущий: нажать — передать управление
     const sel = canPick && confirmFor === String(id);
-    const row = el(canPick ? "button" : "div", "rmperson" + (m.isHost ? " host" : "") + (m.isMe ? " me" : "") + (canPick ? " pick" : "") + (sel ? " sel" : ""));
+    // строка — не <button>: внутри неё своя кнопка «😉», а кнопка в кнопке не работает
+    const row = el("div", "rmperson" + (m.isHost ? " host" : "") + (m.isMe ? " me" : "") + (canPick ? " pick" : "") + (sel ? " sel" : ""));
     row.dataset.key = memberKey(m);
     if (canPick) {
-      row.type = "button"; row.title = "Сделать ведущим";
+      row.setAttribute("role", "button"); row.tabIndex = 0; row.title = "Сделать ведущим";
       row.onclick = () => { confirmFor = sel ? null : String(id); paint(); };
+      row.onkeydown = (e) => { if (e.target === row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); row.onclick(); } };
     }
     const name = String(m.nickname || "Гость");
     const av = el("span", "rmava", name.trim().charAt(0).toUpperCase() || "?");
@@ -1261,7 +1305,11 @@
     row.append(av, tx);
     const pb = pingBadge(m);
     if (pb) row.append(pb);
-    return { row, target: sel ? m : null };
+    const key = String(id ?? "");
+    if (!m.isMe && id != null) row.append(winkButton(key, `Подмигнуть: ${name}`));
+    // выбор знака — сразу под строкой участника
+    const picker = !m.isMe && id != null && winkFor === key ? winkPicker(key) : null;
+    return { row, picker, target: sel ? m : null };
   }
 
   function paintSide(side) {
@@ -1272,19 +1320,23 @@
     const host = list.find((m) => m.isHost), rest = list.filter((m) => !m.isHost);
     const head = el("div", "rmsidehead");
     head.append(el("b", "", "Участники"), el("span", "rmcount", String(list.length)));
+    const others = list.filter((m) => !m.isMe).length;
+    if (others > 1) head.append(winkButton("*", "Подмигнуть всем"));
     side.append(head);
+    if (others > 1 && winkFor === "*") side.append(winkPicker(null));
     const ul = el("div", "rmpeople");
     let target = null;
+    const put = (p) => { ul.append(p.row); if (p.picker) ul.append(p.picker); if (p.target) target = p.target; };
     if (host) {
       ul.append(el("small", "rmgroup", "Ведущий"));
-      ul.append(personRow(host).row);
+      put(personRow(host));
     }
     ul.append(el("small", "rmgroup", rest.length ? `Слушатели · ${rest.length}` : "Слушателей пока нет"));
-    for (const m of rest) { const p = personRow(m); ul.append(p.row); if (p.target) target = p.target; }
+    for (const m of rest) put(personRow(m));
     if (!rest.length) ul.append(el("p", "rmempty", "Отправь друзьям код или ссылку-приглашение — они появятся здесь."));
     side.append(ul);
     if (isHost() && !target && rest.some((m) => !m.isMe && memberId(m) != null)) side.append(el("small", "rmhint", "Нажми на слушателя, чтобы передать ему корону — управление музыкой"));
-    if (!isHost()) side.append(el("small", "rmhint", "Музыкой управляет ведущий с короной. Предложить трек — «⋯» у трека"));
+    if (!isHost()) side.append(el("small", "rmhint", "Музыкой управляет ведущий с короной. Предложить трек — «⋯» у трека, попросить переключить — «😉»"));
     if (target) {
       const cf = el("div", "rmconfirm");
       cf.append(el("span", "", `Передать управление ${target.nickname}? Комната и код останутся, ты станешь слушателем.`));
@@ -1311,7 +1363,7 @@
   // Ярлык — не <button>: на кнопки внутри .player действует «.player button { 38×38, круг }», из-за чего
   // ярлык сжимался в кружок и клик по нему не срабатывал. Живёт в потоке под названием трека — ничего не перекрывает.
   let tab = null;
-  let tabLine = null;             // строка под названием трека: ярлык комнаты + пинг (paintPing)
+  let tabLine = null;             // строка под названием трека с ярлыком комнаты (пинг — только в окне комнаты)
   function tabClick(e) {
     e?.preventDefault(); e?.stopPropagation();
     if (!inRoom()) return;
@@ -1319,7 +1371,7 @@
   }
   function paintTab() {
     const meta = roleEl("player.info");                // под названием и исполнителем в плеере
-    if (!inRoom()) { tabLine?.remove(); tabLine = null; tab = null; document.body.classList.remove("room-away"); paintPing(); return; }
+    if (!inRoom()) { tabLine?.remove(); tabLine = null; tab = null; document.body.classList.remove("room-away"); return; }
     if (!tab && meta) {
       tabLine = el("div", "roomline");
       tab = el("div", "roomtab");
@@ -1332,7 +1384,6 @@
     const away = !isHost() && !follow;
     document.body.classList.toggle("room-away", away);
     if (!tab) return;
-    paintPing();
     tab.className = "roomtab" + (isHost() ? " host" : away ? " away" : " guest");
     tab.textContent = "";
     if (away) {
@@ -1440,7 +1491,7 @@
     wantsPlay,                             // плеер: держать ли трек, загруженный без звука
     take,                                  // плеер: перед следующим треком — поставить предложение («Ставить в очередь»)
     open, create, join, leave, suggest, rejoin,
-    ping: () => checkPing(true),           // проверить пинг и показать его в плеере (только в комнате)
+    ping: () => checkPing(),               // проверить свой пинг (только в комнате; виден в окне комнаты)
     room: () => (inRoom() ? room : null),
     // кнопки бесконечного потока у гостя (у Whisper Yandex — страница «Моя волна»): центральная — играть/пауза
     // трека комнаты, кнопка станций — окно комнаты

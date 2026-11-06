@@ -371,6 +371,9 @@
     likeButton: null,                    // (track) → кнопка лайка для строки трека (состояние держит приложение); нет — без лайка
     themeExport: null,                   // () → Promise<{ id, name, author, bytes }> — текущий стиль файлом .wmt («Темы комнаты»)
     themeImport: null,                   // (Uint8Array) → Promise<true|false|null> — установить тему из файла и включить её
+    // ({ kind: "invite" | "wink", title, body }) → Promise<bool> — системное уведомление, если пользователь его не выключил
+    // (приложение само решает, показывать ли при открытом окне); нет — только подсказка в окне
+    notify: null,
     icon: (name) => ICONS[name] || "",
     settingsCard: null,                  // (card, { section, first, colbreak }) — встроить карточку настроек модуля; нет — у модуля нет настроек
     accentColors: () => null,            // () => { accent, accent2 } — цвета стиля строго #rrggbb (виджет OBS); нет — цвета по умолчанию

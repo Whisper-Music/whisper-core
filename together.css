@@ -88,30 +88,8 @@
 :root[data-style="royal"] .roomtab, :root[data-style="steam"] .roomtab { border-radius: 3px; }
 :root[data-style="lolitta"] .player .meta .roomtab:not(.away) { color: var(--l-ink, var(--accent)); }
 
-/* ---------- пинг: до 100 мс — зелёный, 100–199 — жёлтый, от 200 — красный ---------- */
+/* ---------- пинг (только в окне комнаты): до 100 мс — зелёный, 100–199 — жёлтый, от 200 — красный ---------- */
 :root { --ping-ok: #4ade80; --ping-warn: #facc15; --ping-bad: #ff5a5f; }
-.player .meta .roompings {
-  flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; white-space: nowrap;
-  cursor: pointer; user-select: none; animation: rpIn .22s ease-out;
-}
-.player .meta .roompings:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 999px; }
-@keyframes rpIn { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
-.roompings .rpchip {
-  --c: var(--muted); flex: none; display: inline-flex; align-items: center; gap: 4px; max-width: 150px;
-  padding: 2px 8px; border-radius: 999px; font-size: 11px; line-height: 16px; color: var(--c);
-  background: color-mix(in srgb, var(--c) 13%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent);
-}
-.roompings .rpchip.ok { --c: var(--ping-ok); }
-.roompings .rpchip.warn { --c: var(--ping-warn); }
-.roompings .rpchip.bad { --c: var(--ping-bad); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 60%, transparent), 0 0 8px color-mix(in srgb, var(--c) 35%, transparent); }
-.roompings .rpchip .rpname { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .85; }
-.roompings .rpchip b { font-weight: 700; font-variant-numeric: tabular-nums; }
-.roompings .rpdot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--c); box-shadow: 0 0 5px var(--c); }
-.roompings .rpchip.bad .rpdot { animation: rtLive 1s ease-in-out infinite; }
-.roompings.busy .rpchip { opacity: .6; }
-:root[data-style] .player .meta .roompings .rpchip > span, :root[data-style] .player .meta .roompings .rpchip > b { color: inherit; font-size: inherit; }
-:root[data-anim="off"] .roompings, :root[data-anim="off"] .roompings .rpdot { animation: none; }
-:root[data-style="royal"] .roompings .rpchip, :root[data-style="steam"] .roompings .rpchip { border-radius: 3px; }
 /* окно комнаты: свой пинг + кнопка, пинг у участников */
 .rmpingrow { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 10px; font-size: 13px; background: rgba(255,255,255,.06); }
 .rmpingrow > span { color: var(--muted); cursor: help; }
@@ -223,6 +201,29 @@
 .rmfriend.st-declined .nav, .rmfriend.st-expired .nav { opacity: .8; }
 .rmfriend.st-declined .rmfname, .rmfriend.st-expired .rmfname { color: var(--muted); }
 :root[data-style="royal"] .rmfapp, :root[data-style="steam"] .rmfapp { border-radius: 3px; }
+
+/* «Подмигнуть»: кнопка у участника (и «всем» в заголовке), под ней — ряд знаков */
+.rmwinkbtn { flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center;
+  font-size: 15px; line-height: 1; cursor: pointer; background: rgba(255,255,255,.06); opacity: .75; transition: opacity .15s, background .15s, transform .15s; }
+.rmwinkbtn:hover, .rmwinkbtn:focus-visible, .rmwinkbtn.on { opacity: 1; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.rmwinkbtn.on { box-shadow: inset 0 0 0 1px var(--accent); }
+/* в заголовке «Участники»: название слева, счётчик и «😉 всем» — вместе справа */
+.rmsidehead:has(.rmwinkbtn) { justify-content: flex-start; }
+.rmsidehead:has(.rmwinkbtn) > b { margin-right: auto; }
+.rmwinks { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px; margin: -2px 0 2px; border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, rgba(0,0,0,.18)); animation: rmWinkIn .18s ease-out; }
+.rmwinkb { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; display: grid; place-items: center;
+  font-size: 15px; line-height: 1; cursor: pointer; background: rgba(255,255,255,.07); transition: background .15s, transform .15s; }
+.rmwinkb:hover:not(:disabled), .rmwinkb:focus-visible { background: color-mix(in srgb, var(--accent) 30%, transparent); transform: translateY(-1px); }
+.rmwinkb:disabled { opacity: .5; cursor: default; }
+@keyframes rmWinkIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+/* подмигнули тебе — кнопка комнаты в плеере коротко подпрыгивает и светится */
+.togetherbtn.wink { animation: rtWink .5s ease-in-out 3; color: var(--accent); }
+@keyframes rtWink { 0%, 100% { transform: none; } 30% { transform: translateY(-3px) rotate(-8deg); } 60% { transform: translateY(0) rotate(6deg); } }
+:root[data-anim="off"] .rmwinks, :root[data-anim="off"] .togetherbtn.wink { animation: none; }
+:root[data-style="royal"] .rmwinkbtn, :root[data-style="steam"] .rmwinkbtn,
+:root[data-style="royal"] .rmwinks, :root[data-style="steam"] .rmwinks,
+:root[data-style="royal"] .rmwinkb, :root[data-style="steam"] .rmwinkb { border-radius: 3px; }
 
 /* «Темы комнаты» — модуль справа от окна */
 .rmstage > .rmthemes { animation-name: rmSideInR; }
