@@ -256,6 +256,18 @@ impl Upload {
         post_multipart(&format!("/api/albums/{album_id}/tracks"), &self.token, form).await
     }
 
+    /// «Слушать вместе»: файл трека во временный кэш комнаты (POST /api/rooms/{code}/cache), в архив он не сохраняется.
+    /// Отвечает `{ id }` — ведущий отдаёт его гостям как archiveId. Пускает только ведущего комнаты.
+    pub async fn to_room_cache(self, code: &str, track: TrackFile<'_>) -> Result<WaResponse, String> {
+        let ok = (4..=12).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
+        if !ok {
+            return Err("Некорректный код комнаты".into());
+        }
+        let mut form = Multipart::new();
+        form.file("file", &track.name, track.mime, track.bytes);
+        post_multipart(&format!("/api/rooms/{code}/cache"), &self.token, form).await
+    }
+
     /// Новый приватный альбом с обложкой и этим треком (POST /api/albums). `title` — из album_title().
     pub async fn new_album(self, title: &str, cover: &[u8], track: TrackFile<'_>) -> Result<WaResponse, String> {
         if cover.is_empty() || cover.len() > MAX_COVER_UPLOAD {

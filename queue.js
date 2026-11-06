@@ -27,20 +27,27 @@
   // ---------- история ----------
   // В хранилище — то, что приложение считает нужным сохранить о треке (provider.store), как было у «сырого» трека;
   // в сущность ядра превращается при показе.
+  // Каждый трек — в истории один раз: послушал снова (или стоит повтор) — запись поднимается наверх с новым временем.
+  // Старые истории с повторами чистятся при загрузке (остаётся самое свежее прослушивание).
+  const seen = new Set();
   const hist = (() => {
     try { const v = JSON.parse(localStorage.getItem(HIST_KEY)); return Array.isArray(v) ? v : []; } catch { return []; }
-  })().filter((h) => h && h.t && h.t.id != null && typeof h.t.title === "string" && Number.isFinite(h.at)).slice(0, HIST_MAX);
+  })().filter((h) => h && h.t && h.t.id != null && typeof h.t.title === "string" && Number.isFinite(h.at))
+    .sort((a, b) => b.at - a.at)
+    .filter((h) => { const k = String(h.t.id); if (seen.has(k)) return false; seen.add(k); return true; })
+    .slice(0, HIST_MAX);
   let saveTimer = 0;
   const saveHist = () => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { try { localStorage.setItem(HIST_KEY, JSON.stringify(hist)); } catch {} }, 300);
   };
-  // трек включили (повтор после сбоя — не считается). Тот же трек подряд не дублируется.
+  // трек включили (повтор после сбоя — не считается)
   W.on("start", ({ track: t }) => {
-    if (!t || !t.id) return;
-    const now = Date.now();
-    if (hist[0] && String(hist[0].t.id) === t.id && now - hist[0].at < 30 * 60e3) hist[0].at = now;
-    else hist.unshift({ t: W.provider()?.store?.(t.raw) ?? t.raw ?? t, at: now });
+    if (!t || t.id == null) return;
+    const id = String(t.id);
+    const i = hist.findIndex((h) => String(h.t.id) === id);
+    if (i >= 0) hist.splice(i, 1);
+    hist.unshift({ t: W.provider()?.store?.(t.raw) ?? t.raw ?? t, at: Date.now() });
     if (hist.length > HIST_MAX) hist.length = HIST_MAX;
     saveHist();
     refresh();
@@ -75,6 +82,9 @@
     kit.artists(body.querySelector(".a"), t);
     li.append(kit.image(W.cover(t, 100)), body);
     if (time) { const s = document.createElement("span"); s.className = "qtime"; s.textContent = time; li.append(s); }
+    // лайк прямо в строке — не включая трек (кнопку и её состояние даёт приложение: kit.likeButton)
+    const lb = kit.likeButton?.(t);
+    if (lb) li.append(lb);
     if (remove) {
       const x = document.createElement("button");
       x.className = "qx"; x.title = "Убрать из очереди"; x.innerHTML = IC.x;
@@ -88,7 +98,7 @@
       li.append(mb);
     }
     if (onClick) li.onclick = onClick;
-    kit.decorateRow(li, t, li.querySelector(".qtime, .qx, .morebtn"));      // свои значки приложения — перед кнопками строки
+    kit.decorateRow(li, t, li.querySelector(".qtime, .likebtn, .qx, .morebtn"));      // свои значки приложения — перед кнопками строки
     return li;
   }
 

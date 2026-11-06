@@ -65,6 +65,10 @@
 .qday { margin: 10px 8px 2px; font-size: 12px; color: var(--muted); opacity: .85; }
 .qtime { flex: none; margin-left: auto; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .qtime + .morebtn { margin-left: 0; }
+/* лайк в строке (kit.likeButton): компактнее, чем в больших списках; после времени — без своего отступа */
+.qpanel .likebtn { width: 30px; height: 30px; }
+.qtime + .likebtn { margin-left: 2px; }
+.qpanel .likebtn + .qx, .qpanel .likebtn + .morebtn { margin-left: -4px; }
 
 /* кнопки, открывающие панель */
 .player .qtoggle.on { color: var(--accent); filter: drop-shadow(0 0 6px color-mix(in srgb, var(--btn-glow) 70%, transparent)); }

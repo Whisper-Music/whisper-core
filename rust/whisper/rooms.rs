@@ -98,6 +98,74 @@ pub async fn wa_room_suggest(code: String, track: serde_json::Value) -> Result<W
     room_request(true, format!("/api/rooms/{}/suggest", room_code(&code)?), Some(track), None).await
 }
 
+/// Гость: текущего трека ведущего у него нет — ни на своём сервисе, ни в своём архиве (POST /api/rooms/{code}/missing).
+/// Ведущий с включённым «Делиться треками из архива» сохраняет его в свой архив — тогда у гостя он играет оттуда.
+#[tauri::command]
+pub async fn wa_room_missing(code: String, track_id: String) -> Result<WaResponse, String> {
+    // номер трека любого сервиса — как у сервера комнат (RoomTrack.IsValid)
+    let ok = (1..=40).contains(&track_id.len())
+        && track_id.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-'));
+    if !ok {
+        return Err("Некорректный номер трека".into());
+    }
+    let body = serde_json::json!({ "trackId": track_id });
+    room_request(true, format!("/api/rooms/{}/missing", room_code(&code)?), Some(body), None).await
+}
+
+// ---------- друзья и приглашения ----------
+// Друзья — те, с кем уже слушал в одной комнате (сервер запоминает при входе). Их можно позвать в свою комнату:
+// у друга приложение ждёт приглашений (wa_room_invites с since — long-poll) и показывает уведомление.
+
+/// Мои друзья: [{ id, nickname, lastMetAt, metCount, online }] (GET /api/rooms/friends).
+#[tauri::command]
+pub async fn wa_room_friends() -> Result<WaResponse, String> {
+    room_request(false, "/api/rooms/friends".into(), None, None).await
+}
+
+/// Убрать из друзей (DELETE /api/rooms/friends/{id}).
+#[tauri::command]
+pub async fn wa_room_friend_forget(id: String) -> Result<WaResponse, String> {
+    if !is_uuid(&id) {
+        return Err("Некорректный id друга".into());
+    }
+    let url = api_url(&format!("/api/rooms/friends/{id}"))?;
+    let token = read_token()?;
+    let resp = json_client()
+        .delete(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .map_err(|e| format!("Whisper Archive недоступен: {e}"))?;
+    let status = resp.status().as_u16();
+    let bytes = read_limited(resp, MAX_SMALL_BODY).await?;
+    Ok(WaResponse { status, body: String::from_utf8_lossy(&bytes).into_owned() })
+}
+
+/// Позвать друга в свою комнату (POST /api/rooms/{code}/invite {"userId"}).
+#[tauri::command]
+pub async fn wa_room_invite(code: String, user_id: String) -> Result<WaResponse, String> {
+    if !is_uuid(&user_id) {
+        return Err("Некорректный id друга".into());
+    }
+    let body = serde_json::json!({ "userId": user_id });
+    room_request(true, format!("/api/rooms/{}/invite", room_code(&code)?), Some(body), None).await
+}
+
+/// Мои приглашения; с `since` сервер ждёт новых до 25 с (GET /api/rooms/invites?since=).
+#[tauri::command]
+pub async fn wa_room_invites(since: Option<i64>) -> Result<WaResponse, String> {
+    room_request(false, "/api/rooms/invites".into(), None, since).await
+}
+
+/// Отклонить приглашение (POST /api/rooms/invites/{id}/dismiss).
+#[tauri::command]
+pub async fn wa_room_invite_dismiss(id: String) -> Result<WaResponse, String> {
+    if !room_id_ok(&id) {
+        return Err("Некорректный id приглашения".into());
+    }
+    room_request(true, format!("/api/rooms/invites/{id}/dismiss"), None, None).await
+}
+
 /// Ведущий убирает предложение.
 #[tauri::command]
 pub async fn wa_room_dismiss(code: String, id: String) -> Result<WaResponse, String> {

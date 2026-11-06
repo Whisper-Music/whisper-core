@@ -25,6 +25,19 @@
 }
 :root[data-anim="off"] .player .togetherbtn.sug, .reduce-motion .player .togetherbtn.sug { animation: none; }
 .rmauto { align-self: flex-start; }
+/* друзья и приглашения в окне «Слушать вместе» */
+.rmfriends { display: flex; flex-direction: column; gap: 6px; }
+.rmfriends > small { color: var(--muted); }
+.rmflist { display: flex; flex-direction: column; gap: 4px; max-height: 190px; overflow-y: auto; }
+.rmfriend { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 10px; background: rgba(255,255,255,.04); }
+.rmfriend .nav { padding: 4px 12px; font-size: 12px; }
+.rmfriend .rmact { flex: none; }
+.rmfdot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); opacity: .45; }
+.rmfdot.on { background: #3ecf6e; opacity: 1; box-shadow: 0 0 6px rgba(62,207,110,.6); }
+.rmfname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:root[data-style="royal"] .rmfriend, :root[data-style="steam"] .rmfriend { border-radius: 3px; }
+/* «Сохранять их в мой архив» — уточнение к «Делиться треками, которых нет у гостей», со сдвигом под ней */
+.rmauto.rmsub { margin-left: 26px; margin-top: -4px; font-size: .92em; opacity: .9; }
 /* передача ведущего */
 .rmchip.pick { cursor: pointer; color: inherit; border: 0; font: inherit; font-size: 12px; transition: background .15s, box-shadow .15s; }
 .rmchip.pick:hover { background: rgba(255,255,255,.14); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }

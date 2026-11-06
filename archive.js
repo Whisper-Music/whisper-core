@@ -2,7 +2,8 @@
 // Общий модуль ядра (core/whisper-core.js, docs/CORE.md «Общие модули»): работает только через window.Whisper
 // и Rust-папка rust/whisper/ ядра (команды wa_*, протокол wa://). Подключается после привязки приложения (yandex.js).
 //
-// Как работает: при включённой настройке модуль собирает список треков из альбомов владельца токена (/api/albums/mine).
+// Как работает: при включённой настройке модуль собирает список треков из альбомов владельца токена и альбомов,
+// которые он лайкнул (/api/albums/mine: albums + liked; свои главнее).
 // Когда приложение включает трек, ядро спрашивает источники звука (Whisper.sources) — архив ищет трек
 // с тем же названием и тем же исполнителем. Нашёлся — играет файл из архива; нет или архив недоступен — версия сервиса.
 // Следующий трек очереди, если он есть в архиве, подгружается заранее.
@@ -13,8 +14,9 @@
   if (!W) { console.error("archive.js: нет ядра Whisper — подключи core/whisper-core.js раньше"); return; }
   const kit = W.ui.kit;
   const { invoke } = window.__TAURI__.core;
-  const CFG_KEY = "wa_cfg", IDX_KEY = "wa_index_mine";
-  try { localStorage.removeItem("wa_index"); } catch {}      // старый индекс включал и чужие публичные альбомы
+  const CFG_KEY = "wa_cfg", IDX_KEY = "wa_index_v3";
+  // старые списки: wa_index включал чужие публичные альбомы, wa_index_mine — только свои (без лайкнутых)
+  try { localStorage.removeItem("wa_index"); localStorage.removeItem("wa_index_mine"); } catch {}
   const IDX_TTL = 20 * 60 * 1000;          // список треков архива обновляется не чаще раза в 20 минут
   const RETRY_AFTER = 2 * 60 * 1000;       // после ошибки сервер не дёргаем 2 минуты
   const FIRST_WAIT = 6000;                 // самый первый список ждём не дольше 6 с, дальше играет Яндекс
@@ -84,7 +86,9 @@
     const d = String(pick(a, "title", "name") ?? "").split(/\s+[-–—]\s+/);     // «Исполнитель - Альбом»
     return d.length >= 2 ? d[0] : "";
   }
-  function trackEntry(tr, albumArtist, own) {
+  // own — свой альбом; pub — публичный (такой трек ведущий может отдать гостям «Слушать вместе»: сервер пускает
+  // в комнату только свои и публичные альбомы)
+  function trackEntry(tr, albumArtist, own, pub) {
     const id = String(pick(tr, "id", "trackId", "uuid") ?? "");
     if (!UUID.test(id)) return null;
     let title = nameOf(pick(tr, "title", "name", "trackTitle"));
@@ -103,7 +107,7 @@
     }
     if (!artist) artist = albumArtist;
     titles.delete("");
-    return { i: id, t: [...titles], a: artist ? splitArtists(artist) : [], o: own ? 1 : 0 };
+    return { i: id, t: [...titles], a: artist ? splitArtists(artist) : [], o: own ? 1 : 0, p: pub ? 1 : 0 };
   }
 
   // ---------- список треков архива ----------
@@ -121,12 +125,16 @@
     }));
   }
   async function buildIndex() {
-    // только альбомы владельца токена: публичные альбомы других пользователей в поиск не попадают
+    // свои альбомы и лайкнутые (liked в том же ответе): лайкнутый альбом — как свой, его треки тоже заменяют версии
+    // сервиса. Остальные публичные альбомы других пользователей в поиск не попадают. Свои — первыми и главнее (lookup).
     const mine = await waGet("wa_albums_mine");
     const albums = new Map();                                                 // id -> { a, own }
-    for (const a of listOf(mine)) {
-      const id = String(pick(a, "id") ?? "");
-      if (UUID.test(id) && !albums.has(id)) albums.set(id, { a, own: true });
+    const liked = pick(mine, "liked");
+    for (const [list, own] of [[listOf(mine), true], [Array.isArray(liked) ? liked : [], false]]) {
+      for (const a of list) {
+        const id = String(pick(a, "id") ?? "");
+        if (UUID.test(id) && !albums.has(id)) albums.set(id, { a, own });
+      }
     }
     const list = [...albums.entries()].slice(0, MAX_ALBUMS);
     const entries = [];
@@ -143,7 +151,8 @@
         } catch { failed++; return; }
       }
       const art = albumArtistOf(full);
-      for (const t of tr) { const e = trackEntry(t, art, own); if (e) entries.push(e); }
+      const pub = String(pick(full, "visibility") ?? "").toLowerCase() === "public";
+      for (const t of tr) { const e = trackEntry(t, art, own, pub); if (e) entries.push(e); }
     });
     return { at: Date.now(), albums: list.length, failed, list: entries };
   }
@@ -163,14 +172,20 @@
     } catch {}
   }
   function clearIndex() {
-    st.map = new Map(); st.at = 0; st.info = null; st.blobs.clear();
+    st.map = new Map(); st.at = 0; st.info = null; st.blobs.clear(); added.clear();
     try { localStorage.removeItem(IDX_KEY); } catch {}
   }
-  function sync() {
-    if (st.sync) return st.sync;
+  // fresh — список нужен с учётом только что сделанных изменений (трек сохранён в архив). Если в этот момент уже идёт
+  // сборка, она могла прочитать альбомы ДО сохранения — тогда после неё собираем ещё раз, а не отдаём устаревший список.
+  function sync(fresh = false) {
+    if (st.sync) {
+      if (!fresh) return st.sync;
+      return st.sync.catch(() => {}).then(() => sync());
+    }
     st.sync = (async () => {
       try {
         const idx = await buildIndex();
+        keepAdded(idx);
         applyIndex(idx); st.failAt = 0;
         try { localStorage.setItem(IDX_KEY, JSON.stringify(idx)); } catch {}
         return idx;
@@ -179,20 +194,68 @@
     })();
     return st.sync;
   }
+  // Только что сохранённые треки: попадают в список сразу (addSaved), не дожидаясь пересборки по всем альбомам.
+  // Сборка, начатая до сохранения, их ещё не видит — такие записи доживают до сборки, в которой трек уже есть.
+  const added = new Map();                     // id в архиве → { e, at }
+  function keepAdded(idx) {
+    const have = new Set(idx.list.map((e) => e.i));
+    for (const [id, x] of added) {
+      if (have.has(id)) added.delete(id);
+      else if (Date.now() - x.at < 10 * 60 * 1000) idx.list.push(x.e);
+      else added.delete(id);
+    }
+  }
+  function addSaved(t, id) {
+    if (!UUID.test(String(id || ""))) return;
+    const title = normTitle(t.version ? `${t.title} ${t.version}` : t.title);
+    const artists = [...new Set((t.artists || []).flatMap((a) => splitArtists(a?.name)))];
+    if (!title || !artists.length) return;
+    const e = { i: String(id), t: [title], a: artists, o: 1 };
+    added.set(e.i, { e, at: Date.now() });
+    const arr = st.map.get(title);
+    arr ? arr.unshift(e) : st.map.set(title, [e]);
+    if (st.info) st.info.tracks++;
+    if (!st.at) st.at = Date.now();
+    // и в сохранённый список — чтобы трек находился и после перезапуска, даже если фоновая сборка не удалась
+    try {
+      const idx = JSON.parse(localStorage.getItem(IDX_KEY) || "null");
+      if (idx && Array.isArray(idx.list) && !idx.list.some((x) => x?.i === e.i)) { idx.list.push(e); localStorage.setItem(IDX_KEY, JSON.stringify(idx)); }
+    } catch {}
+  }
+  // id сохранённого трека из ответа сервера: в существующий альбом — список добавленных треков [{ id, title }],
+  // новый альбом — только id альбома, тогда трек (он там один) берём из самого альбома.
+  async function savedId(body) {
+    let v = null;
+    try { v = body ? JSON.parse(body) : null; } catch { return null; }
+    const first = (list) => { for (const x of list || []) { const id = String(pick(x, "id", "trackId") ?? ""); if (UUID.test(id)) return id; } return null; };
+    if (Array.isArray(v)) return first(v);
+    const inner = tracksOf(v);
+    if (inner?.length) return first(inner);
+    const albumId = String(pick(v, "id", "albumId") ?? "");
+    if (!UUID.test(albumId)) return null;
+    try {
+      const r = await waGet("wa_album", { id: albumId });
+      const a = pick(r, "album");
+      return first(tracksOf(a && typeof a === "object" && !Array.isArray(a) ? a : r) || tracksOf(r));
+    } catch { return null; }
+  }
   async function ensureIndex() {
     if (st.at && Date.now() - st.at < IDX_TTL) return;
     if (st.failAt && Date.now() - st.failAt < RETRY_AFTER) return;
     const p = sync().catch(() => {});
     if (!st.at) await Promise.race([p, new Promise((r) => setTimeout(r, FIRST_WAIT))]);     // устаревший список обновляем в фоне
   }
-  function lookup(t) {
-    if (!t?.title || !st.map.size) return null;
+  function hitsFor(t) {
+    if (!t?.title || !st.map.size) return [];
     const key = normTitle(t.version ? `${t.title} ${t.version}` : t.title);
     const ya = new Set((t.artists || []).flatMap((a) => splitArtists(a?.name)));
-    if (!key || !ya.size) return null;
-    const hits = (st.map.get(key) || []).filter((e) => e.a.some((x) => ya.has(x)));
-    return hits.find((e) => e.o) || hits[0] || null;
+    if (!key || !ya.size) return [];
+    return (st.map.get(key) || []).filter((e) => e.a.some((x) => ya.has(x)));
   }
+  // своя копия главнее лайкнутой
+  function lookup(t) { const h = hitsFor(t); return h.find((e) => e.o) || h[0] || null; }
+  // для «Слушать вместе»: только то, что сервер разрешит отдать гостям — свои и публичные альбомы
+  function lookupShare(t) { const h = hitsFor(t); return h.find((e) => e.o) || h.find((e) => e.p) || null; }
 
   // ---------- файлы ----------
   function sniffAudio(b) {
@@ -440,6 +503,61 @@
     return Array.from(new Uint8Array(await blob.arrayBuffer()));
   }
 
+  // Загрузить трек сервиса в альбом архива: target — { id } существующего или { title } нового (с обложкой трека).
+  // Файл трека берёт сам сервис (provider.archiveSave → Rust скачивает его по номеру, адрес файла интерфейс не передаёт).
+  async function upload(t, target) {
+    const args = { fileName: trackFileName(t), albumId: target.id || null, albumTitle: null, coverUrl: null, coverBytes: null };
+    if (!target.id) {
+      args.albumTitle = target.title;
+      const cu = W.cover(t, 800);
+      if (cu) args.coverUrl = cu; else args.coverBytes = await fallbackCover(t);
+    }
+    const r = await W.provider().archiveSave(t, args);
+    if (r.status < 200 || r.status >= 300) throw Object.assign(new Error(errText(r)), { status: r.status });
+    return r;
+  }
+
+  // ---------- «Слушать вместе»: поделиться треком, которого нет у гостя ----------
+  // Ведущий (core/together.js, галочка «Делиться треками из архива»): у гостя трека нет ни на его сервисе, ни в его архиве.
+  // Трек уже есть в архиве ведущего — отдаём его id (даже при выключенной «Играть треки из архива»); нет — сохраняем
+  // в приватный альбом «Слушать вместе» (заполнился — «Слушать вместе 2» и т.д.). Гость играет файл по id через комнату:
+  // сервер пускает к нему участников, пока трек звучит. Возвращает id трека в архиве или бросает ошибку.
+  const ROOM_ALBUM = "Слушать вместе";
+  const sharing = new Map();                      // id трека сервиса → Promise<id в архиве>
+  async function shareForRoom(raw) {
+    const t = W.to("track", raw);
+    if (!t?.id) throw new Error("нет трека");
+    if (!st.hasToken) throw new Error("нужен вход в Whisper Archive");
+    if (typeof W.provider()?.archiveSave !== "function") throw new Error("сервис не умеет отдавать файл трека в архив");
+    const key = String(t.id);
+    if (sharing.has(key)) return sharing.get(key);
+    const p = (async () => {
+      await ensureIndex();
+      const have = lookupShare(t);                 // лайкнутый приватный альбом гостям не отдать — нужна своя копия
+      if (have) return have.i;
+      const albums = listOf(await waGet("wa_albums_mine"));
+      const re = new RegExp(`^${ROOM_ALBUM}(?: (\\d+))?$`);
+      let free = null, n = 0;
+      for (const a of albums) {
+        const m = re.exec(nameOf(pick(a, "title")));
+        if (!m) continue;
+        n = Math.max(n, +(m[1] || 1));
+        const id = String(pick(a, "id") ?? "");
+        if (!free && UUID.test(id) && (Number(pick(a, "trackCount")) || 0) < 50) free = { id, title: nameOf(pick(a, "title")) };
+      }
+      const target = free || { title: n ? `${ROOM_ALBUM} ${n + 1}` : ROOM_ALBUM };
+      const r = await upload(t, target);
+      const id = await savedId(r.body);
+      if (!id) throw new Error("архив не вернул номер трека");
+      addSaved(t, id);
+      sync(true).then(() => note(summary())).catch(() => {});
+      return id;
+    })();
+    sharing.set(key, p);
+    p.catch(() => sharing.delete(key));          // ошибка — в следующий раз попробуем снова
+    return p;
+  }
+
   async function saveTrack(t, target) {
     const id = String(t.id);
     if (saving.has(id)) return;
@@ -447,18 +565,14 @@
     const where = target.id ? `в альбом «${target.title}»` : `в новый альбом «${target.title}»`;
     toast(`«${t.title}» сохраняется ${where}…`, 0);
     try {
-      // файл трека берёт сам сервис (provider.archiveSave → Rust скачивает его по номеру, адрес файла интерфейс не передаёт)
-      const args = { fileName: trackFileName(t), albumId: target.id || null, albumTitle: null, coverUrl: null, coverBytes: null };
-      if (!target.id) {
-        args.albumTitle = target.title;
-        const cu = W.cover(t, 800);
-        if (cu) args.coverUrl = cu; else args.coverBytes = await fallbackCover(t);
-      }
-      const r = await W.provider().archiveSave(t, args);
-      if (r.status < 200 || r.status >= 300) throw Object.assign(new Error(errText(r)), { status: r.status });
+      const r = await upload(t, target);
       toast(`«${t.title}» сохранён ${where}`, 4500, { kind: "ok" });
-      st.at = 0; st.failAt = 0;
-      sync().then(() => note(summary())).catch(() => {});      // чтобы трек сразу находился в архиве
+      // Трек должен играть из архива сразу. Раньше список просто сбрасывался и собирался заново по всем альбомам:
+      // пока сборка шла (а при многих альбомах это дольше 6 с ожидания), трек не находился и играла версия сервиса.
+      // Теперь id нового трека берётся из ответа сервера и попадает в список сразу, а полная сборка идёт в фоне.
+      addSaved(t, await savedId(r.body));
+      st.failAt = 0;
+      sync(true).then(() => note(summary())).catch(() => {});
     } catch (e) {
       if (e?.status === 401) {
         toast("Вход в Whisper Archive больше не действует", 8000, { kind: "err", action: { label: "Войти", fn: () => waLogin().then((ok) => ok && saveTrack(t, target)) } });
@@ -586,7 +700,7 @@
         <button class="nav" id="waLoginBtn">Войти по почте</button>
         <button class="nav" id="waForget" hidden>Выйти</button>
       </div>
-      <label class="switch" title="Трек из твоих альбомов с тем же названием и исполнителем играет вместо версии Яндекса. Действует со следующего трека"><input type="checkbox" id="waOn" /><i></i><span>Играть треки из архива</span></label>
+      <label class="switch" title="Трек из твоих и лайкнутых альбомов с тем же названием и исполнителем играет вместо версии Яндекса. Действует со следующего трека"><input type="checkbox" id="waOn" /><i></i><span>Играть треки из архива</span></label>
       <div id="waBox" class="wabox" hidden>
         <div class="warow">
           <input id="waToken" type="password" placeholder="API-ключ (необязательно)" title="Ключ со страницы /developers на origin.whisper-archive.ru — вместо входа по почте" autocomplete="off" spellcheck="false" />
@@ -620,8 +734,13 @@
     login: waLogin,
     enabled: () => st.on && st.hasToken,
     connected: () => st.hasToken,
-    lookup: (t) => { const h = lookup(W.to("track", t)); return h ? { id: h.i } : null; },
+    lookup: (t) => { const h = lookup(W.to("track", t)); return h ? { id: h.i, own: !!h.o } : null; },
+    // трек архива, который можно отдать гостям комнаты (свой или из публичного альбома)
+    lookupShare: (t) => { const h = lookupShare(W.to("track", t)); return h ? { id: h.i, own: !!h.o } : null; },
     sync: () => sync(),
+    // «Слушать вместе»: id трека в архиве, при необходимости трек сначала сохраняется (альбом «Слушать вместе»)
+    share: (t) => shareForRoom(t),
+    canShare: () => st.hasToken && typeof W.provider()?.archiveSave === "function",
   };
 
   // ---------- старт ----------

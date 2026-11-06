@@ -17,7 +17,7 @@
   const $t = (s, el = document) => el.querySelector(s);
   const roleEl = (r) => W.ui.all(r)[0] || null;
   // Каждое действие с комнатой — своя команда Rust (rust/whisper/rooms.rs: wa_room_*); путь к API собирает Rust из кода комнаты.
-  const ROOM_RE = /^\/api\/rooms(?:\/([A-Z0-9]{4,12})(?:\/(join|leave|state|suggest|host)|\/suggestions\/([A-Za-z0-9]{1,32})\/dismiss)?)?$/;
+  const ROOM_RE = /^\/api\/rooms(?:\/([A-Z0-9]{4,12})(?:\/(join|leave|state|suggest|host|missing)|\/suggestions\/([A-Za-z0-9]{1,32})\/dismiss)?)?$/;
   function call(method, path, body, since) {
     const m = ROOM_RE.exec(path);
     if (!m) return Promise.reject(new Error("Недопустимый запрос к комнате"));
@@ -30,6 +30,7 @@
       p = act === "state" ? invoke("wa_room_state", { code, state: body ?? {} })
         : act === "suggest" ? invoke("wa_room_suggest", { code, track: body ?? {} })
         : act === "host" ? invoke("wa_room_transfer", { code, memberId: String(body?.memberId ?? "") })
+        : act === "missing" ? invoke("wa_room_missing", { code, trackId: String(body?.trackId ?? "") })
         : invoke(act === "join" ? "wa_room_join" : "wa_room_leave", { code });
     }
     return p ? Promise.resolve(p) : Promise.reject(new Error("Недопустимый запрос к комнате"));
@@ -73,11 +74,15 @@
 
   // ---------- трек ↔ формат сервера ----------
   // Как трек сервиса записать для сервера комнат и обратно — знает провайдер (toRoom / fromRoom). Нет — общие поля.
+  // provider — чей это номер трека («yandex», «vk»): гость с другим сервисом ищет такой же трек у себя (resolveRoom)
   const toRoomTrack = (t) => {
     const e = W.to("track", t), p = W.provider();
-    if (p?.toRoom) return p.toRoom(e);
-    return { id: e.id, albumId: e.album?.id || null, title: (e.title || "Без названия").slice(0, 300), version: e.version || null,
-      artists: e.artists.slice(0, 10).map((a) => ({ id: a.id || null, name: a.name })), coverUri: null, durationMs: Math.round(e.durationMs) };
+    const r = p?.toRoom ? p.toRoom(e)
+      : { id: e.id, albumId: e.album?.id || null, title: (e.title || "Без названия").slice(0, 300), version: e.version || null,
+        artists: e.artists.slice(0, 10).map((a) => ({ id: a.id || null, name: a.name })), coverUri: null, durationMs: Math.round(e.durationMs) };
+    const pid = String(p?.id || "");
+    if (r && !r.provider && /^[a-z0-9-]{1,20}$/.test(pid)) r.provider = pid;
+    return r;
   };
   // → трек сервиса («сырой», как его понимает приложение)
   const fromRoomTrack = (r) => {
@@ -92,10 +97,113 @@
   const archiveIdOf = (t) => {
     const a = W.modules.archive;
     if (!a?.enabled?.()) return null;
-    try { const id = a.lookup(t)?.id; return UUID.test(String(id || "")) ? String(id) : null; } catch { return null; }
+    // гостям — только свои и публичные треки архива (лайкнутый приватный альбом сервер в комнату не пустит)
+    try { const id = (a.lookupShare || a.lookup)(t)?.id; return UUID.test(String(id || "")) ? String(id) : null; } catch { return null; }
   };
   const curTrack = () => P.state().track;
   const account = () => W.provider()?.accountLabel || "аккаунта";
+
+  // ---------- трек комнаты у себя: «мягкая связь» сервисов и треки, которых нет ----------
+  // У ведущего и гостя могут быть разные сервисы (Whisper Yandex и Whisper VK) или разные страны: номер трека ведущего
+  // у гостя либо чужой, либо трек недоступен. Порядок:
+  //   1. тот же сервис — номер как есть, если трек у тебя доступен;
+  //   2. иначе — поиск на своём сервисе: то же название, общий исполнитель, та же версия, длина ±15 с;
+  //   3. иначе — свой Whisper Archive (то же название и исполнитель);
+  //   4. иначе — трека нет: гость сообщает серверу (/missing), а ведущий с галочкой «Делиться треками из архива»
+  //      сохраняет трек в свой архив — тогда у гостя он играет оттуда (archiveId → waShared, core/archive.js).
+  // Ведущий так же сопоставляет предложения гостей с другим сервисом.
+  const myProv = () => String(W.provider()?.id || "");
+  const nrm = (s) => String(s ?? "").normalize("NFKC").toLowerCase().replace(/ё/g, "е")
+    .replace(/[(\[]\s*(?:feat|ft|featuring)\.?\s[^)\]]*[)\]]/giu, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  // исполнитель целиком и по частям: «A & B» совпадает с «B», а «Король и Шут» — целиком
+  const artSet = (list) => new Set((list || []).flatMap((a) => { const n = String(a?.name || "");
+    return [n, ...n.split(/\s*(?:[,;&/+]|\s(?:feat|ft|featuring|x|х|vs)\.?\s)\s*/iu)]; }).map(nrm).filter(Boolean));
+  // 0 — не тот трек; больше — точнее совпадение
+  function sameTrack(a, b) {
+    const ta = nrm(a?.title);
+    if (!ta || ta !== nrm(b?.title)) return 0;
+    const A = artSet(a.artists), B = artSet(b.artists);
+    if (![...A].some((x) => B.has(x))) return 0;
+    const va = nrm(a.version), vb = nrm(b.version);
+    if (va && vb && va !== vb) return 0;                // «Remix» и оригинал — разные треки
+    let s = 2 + (va === vb ? 1 : 0);
+    const da = +a.durationMs || 0, db = +b.durationMs || 0;
+    if (da && db) { const d = Math.abs(da - db); if (d > 15000) return 0; if (d < 4000) s++; }
+    return s;
+  }
+  const rkey = (r) => `${r?.provider || ""}:${r?.id ?? ""}`;
+  const resolved = new Map();      // rkey → Promise<{ track, archive, how }>
+  const settled = new Map();       // rkey → тот же результат, когда он уже есть (для синхронных мест: take())
+  function resolveRoom(r) {
+    const k = rkey(r);
+    if (resolved.has(k)) return resolved.get(k);
+    const p = (async () => {
+      const prov = W.provider();
+      const want = W.to("track", fromRoomTrack(r));
+      if (!r?.provider || r.provider === myProv()) {
+        try {
+          const [t] = typeof prov?.tracks === "function" ? await prov.tracks([String(r.id)]) : [];
+          if (t?.id && t.available !== false) return { track: t, how: "same" };
+        } catch (e) {
+          // сеть и прочие сбои — не знаем, играем номер как раньше; «нет такого» (400/404) — ищем дальше
+          if (!/^HTTP (400|404)\b/.test(String(e?.message || e))) return { track: null, how: "error" };
+        }
+      }
+      if (typeof prov?.search === "function") {
+        const q = [want.artists.slice(0, 2).map((a) => a.name).join(" "), want.title].join(" ").trim();
+        try {
+          const res = await prov.search(q, "track");
+          let best = null, bs = 0;
+          for (const t of res?.tracks || []) {
+            if (t?.available === false) continue;
+            const s = sameTrack(t, want);
+            if (s > bs) { bs = s; best = t; }
+          }
+          if (best) return { track: best, how: "match" };
+        } catch { return { track: null, how: "error" }; }       // поиск не ответил — «нет трека» не утверждаем
+      }
+      try { const own = W.modules.archive?.lookup?.(want); if (UUID.test(String(own?.id || ""))) return { track: null, archive: String(own.id), how: "archive" }; } catch {}
+      return { track: null, how: "missing" };
+    })();
+    resolved.set(k, p);
+    p.then((x) => {
+      if (x.how === "error") { resolved.delete(k); return; }      // сбой сети — в следующий раз проверим снова
+      settled.set(k, x);
+      if (settled.size > 300) settled.delete(settled.keys().next().value);
+    });
+    if (resolved.size > 300) resolved.delete(resolved.keys().next().value);
+    return p;
+  }
+  // Что гость включает вместо трека комнаты r; null — такого трека у него нет нигде.
+  const sharedOf = (r) => (UUID.test(String(r?.archiveId || "")) ? String(r.archiveId) : null);
+  async function guestEntity(r) {
+    const x = await resolveRoom(r), sh = sharedOf(r);
+    if (x.track) { const raw = x.track.raw || x.track; return W.to("track", sh ? { ...raw, waShared: sh } : raw); }
+    if (sh) return roomEntity(r);                                       // у тебя нет — играет из архива ведущего
+    if (x.archive) return W.to("track", { ...fromRoomTrack(r), waShared: x.archive });   // из своего архива
+    if (x.how === "error") return roomEntity(r);                        // проверить не вышло — как раньше
+    return null;
+  }
+  // Предложение гостя у ведущего: уже сопоставлено — свой трек; нет на площадке — null; ещё не знаем — как прислали.
+  function sugEntity(s) {
+    const x = settled.get(rkey(s.track));
+    if (x?.track) return W.to("track", { ...(x.track.raw || x.track), _room: true });
+    if (x?.archive) return W.to("track", { ...fromRoomTrack(s.track), waShared: x.archive, _room: true });
+    if (x && x.how === "missing") return null;
+    return roomEntity(s.track, { _room: true });
+  }
+
+  // ведущий: треки, которыми поделился с гостями (id трека сервиса → id файла: в кэше комнаты или в архиве)
+  // shareOn — «Делиться треками, которых нет у гостей»: файл уходит во временный кэш комнаты на сервере архива
+  // (provider.roomCache) и пропадает вместе с комнатой; shareSave — «Сохранять их в мой архив»: вместо кэша трек
+  // ложится в альбом «Слушать вместе» (Whisper.modules.archive.share) и остаётся у тебя.
+  let shareOn = false, shareSave = false;
+  try { shareOn = localStorage.getItem("ym_room_share") === "1"; shareSave = localStorage.getItem("ym_room_share_save") === "1"; } catch {}
+  const canCache = () => typeof W.provider()?.roomCache === "function";
+  const canSave = () => typeof W.provider()?.archiveSave === "function";
+  const canShare = () => !!W.modules.archive?.connected?.() && (canCache() || canSave());
+  const roomShared = new Map();
+  let shareBusy = "", shareAsked = "", shareFailed = "";
 
   // ---------- ведущий: что играет → на сервер ----------
   // Пока у ведущего грузится новый трек (Whisper.player.media().loading), у плеера ещё позиция прошлого трека. Раньше она уходила
@@ -106,7 +214,7 @@
     const ps = P.state(), md = P.media(), t = ps.track;
     if (!t) return null;
     const pos = md.startAt != null ? md.startAt : ps.position;
-    const track = toRoomTrack(t), wa = archiveIdOf(t);
+    const track = toRoomTrack(t), wa = roomShared.get(String(t.id))?.id || archiveIdOf(t);
     if (wa) track.archiveId = wa;
     return {
       track,
@@ -137,6 +245,101 @@
   // раз в 10 с — позиция заново (на случай расхождения часов и как знак «ведущий на месте»)
   setInterval(() => { if (inRoom() && isHost()) hostPush(true); }, 10000);
 
+  // ---------- гость: трека нет у себя ----------
+  // guestFor — что у гостя означает текущий трек комнаты: { key, id своего трека, ent, missing }. Ключ включает archiveId:
+  // ведущий поделился треком из архива — ключ меняется, и трек выясняется заново (теперь он играет из архива ведущего).
+  const pbKey = (r) => `${rkey(r)}:${r?.archiveId || ""}`;
+  let guestFor = null, guestResolving = "", missingNote = "";
+  // какой номер трека сейчас должен играть у гостя (свой, если сопоставлен; иначе — номер ведущего)
+  const guestWantId = (pb) => (guestFor && guestFor.key === pbKey(pb?.track) ? guestFor.id : String(pb?.track?.id ?? ""));
+  function onMissing(r) {
+    if (!P.media().paused) P.pause();                    // своё не играет поверх комнаты; паузой это не считается (syncing)
+    const k = rkey(r);
+    if (missingNote === k) return;
+    missingNote = k;
+    req("POST", `/api/rooms/${code}/missing`, { trackId: String(r.id) }).catch(() => {});
+    showToast(`«${r.title}» нет на твоей площадке — ждём, пока ведущий поделится им`, 7000);
+    paint();
+  }
+  // трек комнаты не заиграл с сервиса гостя (ошибка «не найден» и т.п.) — тоже «нет у меня»
+  let lastSource = "";
+  W.on("source", ({ source }) => { lastSource = source || ""; });
+  setInterval(() => {
+    if (!inRoom() || isHost() || !follow || syncing || !guestFor || guestFor.missing) return;
+    const pb = room.playback;
+    if (!pb || guestFor.key !== pbKey(pb.track) || sharedOf(pb.track)) return;
+    const md = P.media(), t = curTrack();
+    if (md.error && lastSource === "provider" && t && String(t.id) === guestFor.id) {
+      guestFor.missing = true;
+      settled.set(rkey(pb.track), { track: null, how: "missing" });
+      resolved.set(rkey(pb.track), Promise.resolve({ track: null, how: "missing" }));
+      syncing++;
+      try { onMissing(pb.track); } finally { setTimeout(() => { syncing = Math.max(0, syncing - 1); }, 400); }
+    }
+  }, 2000);
+
+  // ---------- ведущий: у гостя нет трека → поделиться из своего архива ----------
+  function onMissingHost() {
+    const ms = room?.missing, t = curTrack();
+    if (!ms?.members?.length || !t || String(toRoomTrack(t).id) !== String(ms.trackId)) return;
+    const k = String(t.id);
+    // Уже поделились, но сервер этот файл не принял (кэш комнаты истёк — трек давно не играл): забываем и делимся заново.
+    // Пока свежее (15 с) — состояние с archiveId ещё может быть в пути.
+    const sh = roomShared.get(k);
+    if (sh && String(room.playback?.track?.archiveId || "") !== sh.id && Date.now() - sh.at > 15000) roomShared.delete(k);
+    if (roomShared.has(k) || archiveIdOf(t)) return;    // уже играет у гостей из архива (или вот-вот)
+    const who = ms.members.join(", ");
+    const can = canShare();
+    // сам — только если прошлая попытка с этим треком не сорвалась (иначе ошибка повторялась бы с каждым снимком)
+    if (shareOn && can && shareFailed !== k) return shareTrack(t);
+    if (shareAsked === k) return;
+    shareAsked = k;
+    showToast(`У ${who} нет «${t.title}» на площадке` + (can ? "" : " — поделиться можно через Whisper Archive"), 9000,
+      can ? { action: { label: "Поделиться", fn: () => shareTrack(t) } } : {});
+  }
+  async function shareTrack(t) {
+    const k = String(t.id);
+    if (shareBusy === k || roomShared.has(k)) return;
+    shareBusy = k;
+    if (panel) paint();
+    // уже есть в твоём архиве — отдаём его; иначе в кэш комнаты (или в архив, если так выбрано / кэша сервис не умеет)
+    let own = null;
+    try { const a = W.modules.archive; own = (a?.lookupShare || a?.lookup)?.(t)?.id; } catch {}
+    const save = !UUID.test(String(own || "")) && canSave() && (shareSave || !canCache());
+    showToast(save ? `«${t.title}» сохраняется в твой архив для гостей…` : `«${t.title}» передаётся гостям через архив…`, 0);
+    try {
+      let id = UUID.test(String(own || "")) ? String(own) : null;
+      if (!id && save) id = await W.modules.archive.share(t);
+      else if (!id) {
+        const r = await W.provider().roomCache(t, code);
+        let body = null;
+        try { body = r?.body ? JSON.parse(r.body) : null; } catch {}
+        if (!(r?.status >= 200 && r.status < 300)) throw new Error(body?.message || body?.title || `сервер ответил HTTP ${r?.status}`);
+        id = String(body?.id || "");
+        if (!UUID.test(id)) throw new Error("сервер не вернул номер файла");
+      }
+      roomShared.set(k, { id, at: Date.now() });
+      if (roomShared.size > 200) roomShared.delete(roomShared.keys().next().value);
+      if (inRoom() && isHost() && String(curTrack()?.id) === k) hostPush(true);
+      showToast(save || own ? `«${t.title}» играет у гостей из твоего архива` : `«${t.title}» играет у гостей — файл живёт, пока открыта комната`, 3500, { kind: "ok" });
+    } catch (e) {
+      shareFailed = k;
+      showToast("Не удалось поделиться треком: " + String(e?.message || e || "ошибка"), 8000,
+        { kind: "err", action: { label: "Ещё раз", fn: () => shareTrack(t) } });
+    } finally { if (shareBusy === k) shareBusy = ""; paint(); }
+  }
+  function setShareOn(on) {
+    shareOn = !!on;
+    try { localStorage.setItem("ym_room_share", shareOn ? "1" : "0"); } catch {}
+    if (shareOn) onMissingHost();
+    paint();
+  }
+  function setShareSave(on) {
+    shareSave = !!on;
+    try { localStorage.setItem("ym_room_share_save", shareSave ? "1" : "0"); } catch {}
+    paint();
+  }
+
   // ---------- гость: включить то же, что у ведущего ----------
   function expectedMs(pb) {
     return pb.positionMs + (pb.playing ? (nowSrv() - pb.at) * (pb.rate || 1) : 0);
@@ -144,15 +347,28 @@
   // tol — допустимое расхождение; сразу после старта трека (roomOnPlaying) оно меньше, чтобы догнать время загрузки
   async function guestApply(tol = SYNC_TOL) {
     if (!inRoom() || isHost() || !follow) return;
-    const pb = room.playback;
+    let pb = room.playback;
     if (!pb) return;
     syncing++;
     try {
       if (Math.abs((P.state().rate || 1) - (pb.rate || 1)) > 0.001) P.setRate(pb.rate || 1);
+      // трек комнаты → свой трек (resolveRoom): у гостя может быть другой сервис или трека может не быть вовсе
+      const key = pbKey(pb.track);
+      if (guestFor?.key !== key) {
+        if (guestResolving === key) return;               // уже выясняем — второй запуск не нужен
+        guestResolving = key;
+        let ent = null;
+        try { ent = await guestEntity(pb.track); } finally { if (guestResolving === key) guestResolving = ""; }
+        if (!inRoom() || isHost() || !follow || pbKey(room.playback?.track) !== key) return;
+        pb = room.playback;                                // пока выясняли, позиция могла обновиться
+        guestFor = { key, id: ent ? String(ent.id) : "", ent, missing: !ent };
+        if (ent) missingNote = "";
+      }
+      if (guestFor.missing) { onMissing(pb.track); return; }
       const t = curTrack();
-      if (!t || t.id !== String(pb.track.id)) {
+      if (!t || String(t.id) !== guestFor.id) {
         // ведущий ещё грузит трек или на паузе — грузим без звука (hold), иначе включаем сразу
-        await P.playTrack(roomEntity(pb.track), { at: Math.max(0, expectedMs(pb) / 1000), hold: !pb.playing, context: "room" });
+        await P.playTrack(guestFor.ent, { at: Math.max(0, expectedMs(pb) / 1000), hold: !pb.playing, context: "room" });
         return;
       }
       let md = P.media();
@@ -224,7 +440,11 @@
     setStatus("");
     if (wasHost !== null && wasHost !== isHost()) roleChanged();
     if (!isHost() && JSON.stringify(snap.playback || null) !== prevPb) guestApply();
-    if (isHost()) onSuggestions();
+    if (isHost()) { onSuggestions(); onMissingHost(); }
+    // в комнате кто-то новый — он теперь в друзьях (сервер записал при его входе)
+    if ((snap.members || []).some((m) => !m.isMe && memberId(m) != null && !friends.some((f) => String(f.id) === String(memberId(m))))) {
+      setTimeout(() => loadFriends(), 1500);
+    }
     paint();
   }
 
@@ -234,6 +454,7 @@
   let confirmFor = null;          // кому ведущий собирается передать управление (подтверждение в окне)
   function roleChanged() {
     follow = true; hostLast = ""; confirmFor = null;
+    guestFor = null; missingNote = ""; shareAsked = "";
     document.body.classList.toggle("room-guest", !isHost());
     if (isHost()) {
       mySpeed = null;
@@ -268,6 +489,8 @@
     const list = sugList();
     const ids = new Set(list.map((s) => s.id));
     for (const id of taken) if (!ids.has(id)) taken.delete(id);
+    // заранее сопоставляем предложения со своим сервисом (у гостя может быть другой) — к «Следующим» результат уже готов
+    for (const s of list) if (!settled.has(rkey(s.track))) resolveRoom(s.track).then(() => { if (panel) paint(); }).catch(() => {});
     const fresh = list.filter((s) => !seenSug.has(s.id));
     for (const s of fresh) seenSug.add(s.id);
     if (!fresh.length) return;
@@ -294,8 +517,10 @@
   // поставить предложение сразу за текущим треком и убрать его из списка
   function queueSug(s, quiet = false) {
     if (!s || taken.has(s.id)) return false;
+    const ent = sugEntity(s);
+    if (!ent) { if (!quiet) showToast(`«${s.track.title}» нет на твоей площадке`, 4000, { kind: "err" }); return false; }
     taken.add(s.id);
-    W.queue.playNext(roomEntity(s.track, { _room: true }), { quiet: true });      // _room — трек из комнаты (не «волны»)
+    W.queue.playNext(ent, { quiet: true });      // _room — трек из комнаты (не «волны»)
     dismiss(s.id);
     if (!quiet) showToast(`«${s.track.title}» заиграет следующим`, 2500, { kind: "ok" });
     return true;
@@ -303,7 +528,7 @@
   // плеер приложения зовёт перед переходом к следующему треку: берём самое раннее предложение
   const take = () => {
     if (!autoQ || !inRoom() || !isHost()) return false;
-    const s = sugList().find((x) => !taken.has(x.id));
+    const s = sugList().find((x) => !taken.has(x.id) && sugEntity(x));      // которых нет на твоей площадке — пропускаем
     return s ? queueSug(s, true) : false;
   };
   function setAutoQ(on) {
@@ -328,11 +553,14 @@
     if (isHost()) hostPush(true); else guestApply();
     paint();
     setTimeout(() => { if (gen === pollGen) checkPing(false); }, 2000);   // свой пинг — серверу сразу, остальным видно
+    setTimeout(() => loadFriends(true), 2500);                            // вошёл к людям — они теперь в друзьях
+    inboxKick();
   }
   function gone(msg) {
     pollGen++;
     const wasGuest = room && !room.isHost;
     room = null; code = ""; follow = true; resumeUntil = 0;
+    guestFor = null; missingNote = ""; shareAsked = ""; roomShared.clear();
     myPing = 0; pingSrv = null; pingShowUntil = 0; pingErr = ""; loadChecked = ""; clearTimeout(pingHideTimer);
     unkeep();
     document.body.classList.remove("in-room", "room-guest");
@@ -396,6 +624,104 @@
       await join(c);
     } finally { offering = false; }
   }
+  // ---------- друзья и приглашения из приложения ----------
+  // Друзья — все, с кем ты уже был в одной комнате (сервер запоминает при входе в комнату). Позвать друга — кнопка
+  // в окне комнаты (или в окне «Слушать вместе» до комнаты: тогда комната создаётся сама). У друга приложение ждёт
+  // приглашений (wa_room_invites — long-poll, пока запущено) и показывает уведомление «Войти»; вход — как по ссылке
+  // (offerJoin: окно с подтверждением). Звать можно только друзей, кто тебя удалил из своих — приглашений не получает.
+  async function cmd(name, args) {
+    const r = await invoke(name, args);
+    let data = null;
+    try { data = r.body ? JSON.parse(r.body) : null; } catch {}
+    if (r.status >= 200 && r.status < 300) return data;
+    const e = new Error(data?.message || `Сервер ответил HTTP ${r.status}`);
+    e.status = r.status;
+    throw e;
+  }
+  let friends = [], friendsAt = 0, friendsBusy = false, invites = [];
+  const invited = new Map();          // id друга → когда позвали (подпись «Позван» на 10 минут)
+  const seenInv = new Set();          // приглашения, о которых уже сказали
+  async function loadFriends(force = false) {
+    if (friendsBusy || (!force && Date.now() - friendsAt < 15000)) return;
+    friendsBusy = true;
+    try {
+      const v = await cmd("wa_room_friends");
+      const next = (Array.isArray(v) ? v : []).filter((f) => UUID.test(String(f?.id || "")) && f.nickname).slice(0, 100);
+      const changed = JSON.stringify(next) !== JSON.stringify(friends);
+      friends = next;
+      friendsAt = Date.now();
+      if (changed && panel) paint();
+      inboxKick();
+    } catch {} finally { friendsBusy = false; }
+  }
+  async function inviteFriend(f) {
+    if (!inRoom()) { await create(); if (!inRoom()) return; }
+    try {
+      const r = await cmd("wa_room_invite", { code, userId: String(f.id) });
+      invited.set(String(f.id), Date.now());
+      showToast(r?.online ? `${f.nickname} получит приглашение` : `Приглашение отправлено — ${f.nickname} увидит его, когда откроет приложение`, 4000, { kind: "ok" });
+    } catch (e) { showToast("Не удалось позвать: " + e.message, 5000, { kind: "err" }); }
+    if (panel) paint();
+  }
+  async function forgetFriend(f) {
+    const ok = await modal({ title: "Убрать из друзей?", text: `${f.nickname} пропадёт из списка, и звать друг друга из приложения вы больше не сможете. Снова станете друзьями, если окажетесь в одной комнате.`, ok: "Убрать", danger: true });
+    if (!ok) return;
+    try { await cmd("wa_room_friend_forget", { id: String(f.id) }); friends = friends.filter((x) => x.id !== f.id); }
+    catch (e) { showToast("Не удалось убрать: " + e.message, 4000, { kind: "err" }); }
+    if (panel) paint();
+  }
+
+  // ждать приглашений — пока запущено приложение и есть хоть один друг (или ты в комнате)
+  let inboxOn = false, inboxGen = 0;
+  function inboxKick() { if (!inboxOn && (friends.length || inRoom())) { inboxOn = true; inboxLoop(++inboxGen); } }
+  async function inboxLoop(gen) {
+    let since = null, fails = 0;
+    while (gen === inboxGen) {
+      const t0 = Date.now();
+      try {
+        const v = await cmd("wa_room_invites", { since });
+        if (gen !== inboxGen) return;
+        fails = 0;
+        const ver = +v?.version || 0;
+        const same = since === ver;
+        since = ver;
+        const next = (Array.isArray(v?.invites) ? v.invites : []).filter((i) => i?.id && /^[A-Z0-9]{4,12}$/.test(String(i.code || "")));
+        const changed = JSON.stringify(next.map((i) => i.id)) !== JSON.stringify(invites.map((i) => i.id));
+        invites = next;
+        for (const inv of invites) onInvite(inv);
+        if (changed && panel) paint();
+        if (same && Date.now() - t0 < 1500) await new Promise((r) => setTimeout(r, 3000));   // сервер не ждал — не крутимся вхолостую
+      } catch (e) {
+        if (gen !== inboxGen) return;
+        // нет входа в архив или старый сервер без приглашений — перестаём (снова — после входа в комнату)
+        if ([401, 403, 404, 405].includes(e.status) || /не задан/i.test(e.message)) { inboxOn = false; return; }
+        await new Promise((r) => setTimeout(r, Math.min(60000, 3000 * ++fails)));
+      }
+    }
+  }
+  function onInvite(inv) {
+    if (seenInv.has(inv.id)) return;
+    seenInv.add(inv.id);
+    if (inRoom() && code === inv.code) return;
+    const who = String(inv.from || "Друг").slice(0, 40);
+    showToast(`${who} зовёт слушать вместе`, 15000, { action: { label: "Войти", fn: () => offerJoin(inv.code) } });
+    // окно свёрнуто или в фоне — мигнуть значком на панели задач
+    if (!document.hasFocus()) {
+      try { window.__TAURI__?.window?.getCurrentWindow?.().requestUserAttention(2)?.catch?.(() => {}); } catch {}
+    }
+  }
+  async function declineInvite(inv) {
+    invites = invites.filter((i) => i.id !== inv.id);
+    if (panel) paint();
+    try { await cmd("wa_room_invite_dismiss", { id: String(inv.id) }); } catch {}
+  }
+  // при запуске: есть вход в архив — узнать друзей (и, если они есть, ждать приглашений)
+  setTimeout(async () => {
+    let hasKey = false;
+    try { hasKey = await invoke("wa_token_exists"); } catch {}
+    if (hasKey) loadFriends(true);
+  }, 2500);
+
   window.__TAURI__.event?.listen("room-link", () => takeLink());
   setTimeout(takeLink, 1200);        // приложение запустили по ссылке — окно и вход к этому времени готовы
   async function leave() {
@@ -439,8 +765,12 @@
     // гость: сам включил другой трек или поставил паузу
     const t = curTrack(), pb = room.playback;
     if (!follow || syncing || !pb) return;
+    // трек комнаты ещё выясняется (старый трек пока на месте) — это не уход
+    if (!guestFor || guestFor.key !== pbKey(pb.track)) return;
     const md = P.media();
-    if (t && t.id !== String(pb.track.id)) detach("Ты включил свой трек");
+    // трека комнаты у гостя нет, плеер ждёт на паузе; сам включил что-то — отходит, чтобы ожидание это не глушило
+    if (guestFor.missing) { if (!md.paused && !md.loading) detach("Ты включил своё"); return; }
+    if (t && String(t.id) !== guestWantId(pb)) detach("Ты включил свой трек");
     // трек комнаты ещё грузится (плеер пока на паузе) — это не пауза гостя
     else if (md.paused && pb.playing && !md.pending && !md.loading) {
       // трек просто доиграл раньше, чем пришёл следующий от ведущего, — это не пауза
@@ -605,12 +935,17 @@
     panel.wrap.remove(); panel = null;
   }
 
+  // окно перерисовывается и пока идёт проверка ключа (пришли друзья, приглашение) — дорисовывает только последний вызов,
+  // иначе содержимое удваивалось бы
+  let setupGen = 0;
   async function paintSetup(box) {
-    box.append(el("h2", "", "Слушать вместе"));
-    box.append(el("p", "rmlead", `Одна и та же музыка у всех в комнате в один и тот же момент. Каждый слушает со своего ${account()}, ведущий управляет, остальные могут предлагать треки.`));
+    const g = ++setupGen;
     let hasKey = false;
     try { hasKey = await invoke("wa_token_exists"); } catch {}
-    if (!panel || panel.box !== box) return;
+    if (!panel || panel.box !== box || g !== setupGen || inRoom()) return;
+    box.textContent = "";
+    box.append(el("h2", "", "Слушать вместе"));
+    box.append(el("p", "rmlead", `Одна и та же музыка у всех в комнате в один и тот же момент. Каждый слушает со своего ${account()}, ведущий управляет, остальные могут предлагать треки.`));
     if (!hasKey) {
       box.append(el("p", "rmwarn", "Комнаты работают через Whisper Archive. Войди в архив: Настройки → «Для разработчиков» → Whisper Archive — у всех участников."));
     }
@@ -622,10 +957,57 @@
     const go = el("button", "nav", "Войти"); go.type = "submit"; go.disabled = !hasKey;
     row.onsubmit = (e) => { e.preventDefault(); join(inp.value); };
     row.append(inp, go);
-    box.append(mk, el("div", "rmor", "или"), row, el("p", "status rmstatus"));
+    box.append(mk, el("div", "rmor", "или"), row);
+    if (hasKey) { invitesBlock(box); friendsBlock(box); loadFriends(); }
+    box.append(el("p", "status rmstatus"));
     const done = el("button", "nav", "Закрыть"); done.type = "button"; done.onclick = close;
     const r = el("div", "row"); r.append(done); box.append(r);
     if (hasKey) inp.focus();
+  }
+
+  // «Позвать друзей»: друзья, которых сейчас нет в комнате; без комнаты «Позвать» сначала создаёт её
+  function friendsBlock(box) {
+    const here = new Set((room?.members || []).map((m) => String(memberId(m) ?? "")));
+    const list = friends.filter((f) => !here.has(String(f.id)));
+    if (!list.length) return;
+    const sec = el("div", "rmfriends");
+    sec.append(el("small", "", inRoom() ? "Позвать друзей" : "Друзья — с ними ты уже слушал вместе"));
+    const ul = el("div", "rmflist");
+    // сначала те, у кого приложение открыто
+    for (const f of [...list].sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0))) {
+      const row = el("div", "rmfriend");
+      const dot = el("i", "rmfdot" + (f.online ? " on" : ""));
+      dot.title = f.online ? "Приложение открыто" : "Не в сети";
+      const name = el("span", "rmfname", f.nickname);
+      name.title = `Слушали вместе: ${f.metCount || 1} ${(f.metCount || 1) % 10 >= 2 && (f.metCount || 1) % 10 <= 4 && ((f.metCount || 1) % 100 < 10 || (f.metCount || 1) % 100 > 20) ? "раза" : "раз"}`;
+      const was = invited.get(String(f.id));
+      const fresh = was && Date.now() - was < 10 * 60e3;
+      const b = el("button", "nav" + (fresh ? "" : " active"), fresh ? "Позван ✓" : "Позвать");
+      b.type = "button";
+      b.title = fresh ? "Позвать ещё раз" : inRoom() ? "Друг получит уведомление в приложении" : "Создать комнату и позвать";
+      b.onclick = () => { b.disabled = true; inviteFriend(f).finally(() => { b.disabled = false; }); };
+      const x = el("button", "rmact", "✕"); x.type = "button"; x.title = "Убрать из друзей"; x.onclick = () => forgetFriend(f);
+      row.append(dot, name, b, x);
+      ul.append(row);
+    }
+    sec.append(ul);
+    box.append(sec);
+  }
+  // приглашения тебе (окно до комнаты): «Войти» — как по ссылке, «✕» — отклонить
+  function invitesBlock(box) {
+    const list = invites.filter((i) => !(inRoom() && code === i.code));
+    if (!list.length) return;
+    const sec = el("div", "rmfriends rminvites");
+    sec.append(el("small", "", "Тебя зовут"));
+    for (const inv of list) {
+      const row = el("div", "rmfriend");
+      row.append(el("i", "rmfdot on"), el("span", "rmfname", `${String(inv.from || "Друг").slice(0, 40)} · ${inv.code}`));
+      const b = el("button", "nav active", "Войти"); b.type = "button"; b.onclick = () => offerJoin(inv.code);
+      const x = el("button", "rmact", "✕"); x.type = "button"; x.title = "Отклонить"; x.onclick = () => declineInvite(inv);
+      row.append(b, x);
+      sec.append(row);
+    }
+    box.append(sec);
   }
 
   function trackLine(t) {
@@ -652,6 +1034,7 @@
     const btns = el("div", "rmcodebtns"); btns.append(lk, cp);
     c.append(el("span", "", "Код комнаты"), big, btns);
     box.append(c);
+    friendsBlock(box);
     // пинг: свой + кнопка проверки (пинг каждого — в списке участников слева)
     const pr = el("div", "rmpingrow");
     const plv = pingLevel(myPing);
@@ -683,6 +1066,30 @@
       const cb = el("input"); cb.type = "checkbox"; cb.checked = autoQ; cb.onchange = () => setAutoQ(cb.checked);
       lb.append(cb, el("i"), el("span", "", "Ставить в очередь"));
       box.append(lb);
+      // ведущий: трека нет у гостя — передать ему файл через архив (на время комнаты или с сохранением себе)
+      const can = canShare();
+      const ls = el("label", "switch rmauto");
+      ls.title = can
+        ? "Если у гостя трека нет на его площадке, файл передаётся ему через сервер Whisper Archive. Он хранится, только пока открыта комната"
+        : "Нужен вход в Whisper Archive";
+      const cs = el("input"); cs.type = "checkbox"; cs.checked = shareOn && can; cs.disabled = !can; cs.onchange = () => setShareOn(cs.checked);
+      ls.append(cs, el("i"), el("span", "", "Делиться треками, которых нет у гостей"));
+      box.append(ls);
+      if (shareOn && can && canSave() && canCache()) {
+        const lv2 = el("label", "switch rmauto rmsub");
+        lv2.title = "Переданные треки остаются у тебя в приватном альбоме «Слушать вместе»";
+        const c2 = el("input"); c2.type = "checkbox"; c2.checked = shareSave; c2.onchange = () => setShareSave(c2.checked);
+        lv2.append(c2, el("i"), el("span", "", "Сохранять их в мой архив"));
+        box.append(lv2);
+      }
+      const ms = room.missing;
+      if (ms?.members?.length) {
+        const cur = String(curTrack()?.id ?? ""), who = ms.members.join(", ");
+        box.append(el("p", "rmwarn", roomShared.has(cur) ? `Через архив слушают: ${who}`
+          : `Нет на площадке у: ${who}` + (shareBusy === cur ? " — трек передаётся…" : "")));
+      }
+    } else if (guestFor?.missing && room.playback && guestFor.key === pbKey(room.playback.track)) {
+      box.append(el("p", "rmwarn", "Этого трека нет на твоей площадке. Он заиграет, если ведущий поделится им через архив."));
     }
     // предложения
     const sg = room.suggestions || [];
@@ -694,10 +1101,11 @@
       if (isHost()) row.append(el("span", "rmfrom", taken.has(s.id) ? "в очереди" : s.from));
       const acts = el("div", "rmacts");
       const btn = (label, title, fn) => { const b = el("button", "rmact", label); b.type = "button"; b.title = title; b.onclick = fn; acts.append(b); };
-      if (isHost() && !taken.has(s.id)) {
-        btn("▶", "Включить сейчас", () => { taken.add(s.id); P.playTrack(roomEntity(s.track, { _room: true }), { context: "room" }); dismiss(s.id); });
+      const ent = isHost() ? sugEntity(s) : null;
+      if (isHost() && !taken.has(s.id) && ent) {
+        btn("▶", "Включить сейчас", () => { taken.add(s.id); P.playTrack(ent, { context: "room" }); dismiss(s.id); });
         btn("＋", "Играть следующим", () => queueSug(s));
-      }
+      } else if (isHost() && !taken.has(s.id)) row.append(el("span", "rmfrom", "нет на твоей площадке"));
       btn("✕", isHost() ? "Убрать" : "Отозвать", () => dismiss(s.id));
       row.append(acts); sb.append(row);
     }
@@ -836,8 +1244,14 @@
     W.emit("room", roomEvent());     // приложению: у Whisper Yandex — страница «Моя волна» у гостя (yandex.js)
     if (!panel) return;
     const keepStatus = $t(".rmstatus", panel.box)?.textContent || "";
+    // набранный код комнаты не должен пропадать, если окно перерисовалось (пришли друзья или приглашение)
+    const codeInp = $t(".rmcode", panel.box), keepCode = codeInp?.value || "", codeFocus = codeInp && document.activeElement === codeInp;
     panel.box.textContent = "";
-    if (inRoom()) paintRoom(panel.box); else paintSetup(panel.box);
+    if (inRoom()) paintRoom(panel.box);
+    else paintSetup(panel.box).then(() => {
+      const ni = panel && $t(".rmcode", panel.box);
+      if (ni && keepCode) { ni.value = keepCode; if (codeFocus) ni.focus(); }
+    });
     if (keepStatus) setStatus(keepStatus);
     panel.side.hidden = !inRoom();
     if (inRoom()) paintSide(panel.side); else panel.side.textContent = "";
