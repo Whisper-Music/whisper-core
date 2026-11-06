@@ -151,10 +151,31 @@ pub async fn wa_room_invite(code: String, user_id: String) -> Result<WaResponse,
     room_request(true, format!("/api/rooms/{}/invite", room_code(&code)?), Some(body), None).await
 }
 
-/// Мои приглашения; с `since` сервер ждёт новых до 25 с (GET /api/rooms/invites?since=).
+/// Мои приглашения; с `since` сервер ждёт новых до 25 с (GET /api/rooms/invites?since=&app=).
+/// `app` — какое это приложение («yandex», «vk»): друзья видят его рядом с ником.
 #[tauri::command]
-pub async fn wa_room_invites(since: Option<i64>) -> Result<WaResponse, String> {
-    room_request(false, "/api/rooms/invites".into(), None, since).await
+pub async fn wa_room_invites(since: Option<i64>, app: Option<String>) -> Result<WaResponse, String> {
+    let mut url = api_url("/api/rooms/invites")?;
+    {
+        let mut q = url.query_pairs_mut();
+        if let Some(v) = since {
+            q.append_pair("since", &v.max(0).to_string());
+        }
+        if let Some(a) = app.filter(|a| (1..=20).contains(&a.len()) && a.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')) {
+            q.append_pair("app", &a);
+        }
+    }
+    let token = read_token()?;
+    let resp = poll_client()
+        .get(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Whisper Archive недоступен: {e}"))?;
+    let status = resp.status().as_u16();
+    let bytes = read_limited(resp, MAX_SMALL_BODY).await?;
+    Ok(WaResponse { status, body: String::from_utf8_lossy(&bytes).into_owned() })
 }
 
 /// Отклонить приглашение (POST /api/rooms/invites/{id}/dismiss).
@@ -164,6 +185,85 @@ pub async fn wa_room_invite_dismiss(id: String) -> Result<WaResponse, String> {
         return Err("Некорректный id приглашения".into());
     }
     room_request(true, format!("/api/rooms/invites/{id}/dismiss"), None, None).await
+}
+
+// ---------- темы комнаты ----------
+// Участник делится своим стилем (.wmt): файл уходит на сервер архива и живёт, пока жива комната;
+// остальные видят его в снимке (themes) и скачивают, чтобы установить у себя.
+
+/// encodeURIComponent → строка (название темы приходит в заголовке, а там только ASCII).
+fn pct_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let hex = |c: u8| (c as char).to_digit(16);
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn header(req: &tauri::ipc::Request<'_>, name: &str) -> String {
+    req.headers().get(name).and_then(|v| v.to_str().ok()).map(pct_decode).unwrap_or_default()
+}
+
+/// Поделиться темой с комнатой. Тело — байты файла темы (без перевода в JSON), заголовки:
+/// x-room-code, x-theme-name, x-theme-author (в процентной кодировке).
+#[tauri::command]
+pub async fn wa_room_theme_share(request: tauri::ipc::Request<'_>) -> Result<WaResponse, String> {
+    let tauri::ipc::InvokeBody::Raw(body) = request.body() else {
+        return Err("Нет данных темы".into());
+    };
+    let code = header(&request, "x-room-code");
+    let code = room_code(&code)?.to_string();
+    let name = header(&request, "x-theme-name");
+    let author = header(&request, "x-theme-author");
+    let bytes = body.clone();
+    let up = super::upload::begin(None, None)?;
+    up.to_room_theme(&code, &name, &author, &bytes).await
+}
+
+/// Файл темы, которой поделились в комнате (GET /api/rooms/{code}/themes/{id}) — байтами, как файл с диска.
+#[tauri::command]
+pub async fn wa_room_theme_get(code: String, id: String) -> Result<tauri::ipc::Response, String> {
+    if !is_uuid(&id) {
+        return Err("Некорректный id темы".into());
+    }
+    let url = api_url(&format!("/api/rooms/{}/themes/{id}", room_code(&code)?))?;
+    let token = read_token()?;
+    let resp = send_get(media_client(), url, &token).await?;
+    if !resp.status().is_success() {
+        return Err(format!("Тема не скачалась: HTTP {}", resp.status().as_u16()));
+    }
+    let bytes = read_limited(resp, super::upload::MAX_THEME_UPLOAD + 1024).await?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// Убрать тему из комнаты (DELETE /api/rooms/{code}/themes/{id}) — свою или любую, если ты ведущий.
+#[tauri::command]
+pub async fn wa_room_theme_remove(code: String, id: String) -> Result<WaResponse, String> {
+    if !is_uuid(&id) {
+        return Err("Некорректный id темы".into());
+    }
+    let url = api_url(&format!("/api/rooms/{}/themes/{id}", room_code(&code)?))?;
+    let token = read_token()?;
+    let resp = json_client()
+        .delete(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .map_err(|e| format!("Whisper Archive недоступен: {e}"))?;
+    let status = resp.status().as_u16();
+    let bytes = read_limited(resp, MAX_SMALL_BODY).await?;
+    Ok(WaResponse { status, body: String::from_utf8_lossy(&bytes).into_owned() })
 }
 
 /// Ведущий убирает предложение.
@@ -273,5 +373,8 @@ mod room_tests {
         assert!(room_id_ok("a1b2c3"));
         assert!(!room_id_ok("a/b"));
         assert!(!room_id_ok(""));
+        assert_eq!(pct_decode("%D0%9C%D0%B5%D0%BB%20x"), "Мел x");
+        assert_eq!(pct_decode("50%"), "50%");
+        assert_eq!(pct_decode("%zz"), "%zz");
     }
 }

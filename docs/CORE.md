@@ -547,6 +547,18 @@ API для других модулей: `Whisper.modules.archive` — `login(rea
   Трек уже есть в архиве ведущего — отдаётся он, без загрузки. В любом случае id уходит гостям как `archiveId`,
   и у гостя трек играет по `/api/tracks/{id}/stream`: сервер отдаёт либо трек архива, либо файл кэша комнаты. Так же «нет у меня» — если трек комнаты не заиграл с сервиса
   (ошибка плеера при источнике `provider`). Предложения гостей ведущий сопоставляет со своим сервисом так же.
+* **Статус позванных друзей.** В снимке комнаты (для участников) — `room.invited: [{ userId, status, at }]`, где `status` —
+  `pending` (позван), `declined` (отклонил), `expired` (не ответил). Кто уже вошёл — его нет в `invited`, он в `members`.
+  Окно показывает «В комнате / Позван ✓ / Отклонил / Не ответил» только в комнате: вышел — у всех снова «Позвать».
+  У друга есть `app` — id провайдера его приложения (`yandex`, `vk`…; приложение сообщает его в `wa_room_invites(since, app)`),
+  рядом с ником — название (`APP_LABEL` в together.js; новое приложение — добавь туда).
+* **Темы комнаты** — модуль справа от окна. «Поделиться моей темой» берёт `kit.themeExport()` → `{ id, name, author, bytes }`
+  (текущий стиль файлом .wmt) и отдаёт `wa_room_theme_share` сырыми байтами с заголовками `x-room-code`, `x-theme-name`,
+  `x-theme-author` (percent-encoded) → `POST /api/rooms/{code}/themes`. Список — `room.themes: [{ id, name, author, from, mine, size, at }]`;
+  «Установить» — `wa_room_theme_get(code, id)` (байты) → `kit.themeImport(bytes)` (true / false / null — отказался заменить);
+  «✕» — свою или (у ведущего) любую: `wa_room_theme_remove`. До 8 тем и 160 МБ на комнату, файл ≤ 64 МБ; та же тема от того же
+  человека заменяет прежнюю; живут, пока открыта комната. Новая чужая тема — подсказка с кнопкой «Установить».
+  Нет `themeExport` / `themeImport` у приложения — кнопки неактивны.
 * **Rust:** команды `wa_room_create / get / join / leave / state / suggest / dismiss / transfer / ping / missing` (`whisper::rooms::`),
   для кэша комнаты — `upload::begin(None, None)?.to_room_cache(code, TrackFile)` в своей команде приложения
   (у Whisper Yandex — `wa_room_cache_track` в whisper_yandex.rs: скачивает трек с Яндекса и отдаёт в кэш), и

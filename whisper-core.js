@@ -369,6 +369,8 @@
     image: (src, cls) => { const im = document.createElement("img"); im.alt = ""; im.loading = "lazy"; if (cls) im.className = cls; if (src) im.src = src; return im; },
     decorateRow: () => {},               // (li, track, before) — свои значки в строке трека (например, «скачан»)
     likeButton: null,                    // (track) → кнопка лайка для строки трека (состояние держит приложение); нет — без лайка
+    themeExport: null,                   // () → Promise<{ id, name, author, bytes }> — текущий стиль файлом .wmt («Темы комнаты»)
+    themeImport: null,                   // (Uint8Array) → Promise<true|false|null> — установить тему из файла и включить её
     icon: (name) => ICONS[name] || "",
     settingsCard: null,                  // (card, { section, first, colbreak }) — встроить карточку настроек модуля; нет — у модуля нет настроек
     accentColors: () => null,            // () => { accent, accent2 } — цвета стиля строго #rrggbb (виджет OBS); нет — цвета по умолчанию

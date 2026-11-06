@@ -216,7 +216,31 @@
 :root[data-anim="off"] .rmstage > .rmside { animation: none; }
 :root[data-style="royal"] .rmperson, :root[data-style="steam"] .rmperson,
 :root[data-style="royal"] .rmcount, :root[data-style="steam"] .rmcount { border-radius: 3px; }
-/* узкое окно: модуль участников уходит над окном комнаты */
+/* друг: приложение рядом с ником, «В комнате» вместо кнопки, «Отклонил» / «Не ответил» — приглушённо */
+.rmfapp { flex: none; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; line-height: 16px; color: var(--muted);
+  border: 1px solid color-mix(in srgb, var(--muted) 40%, transparent); white-space: nowrap; }
+.rmfstate { flex: none; font-size: 12px; color: var(--accent); white-space: nowrap; padding: 0 4px; }
+.rmfriend.st-declined .nav, .rmfriend.st-expired .nav { opacity: .8; }
+.rmfriend.st-declined .rmfname, .rmfriend.st-expired .rmfname { color: var(--muted); }
+:root[data-style="royal"] .rmfapp, :root[data-style="steam"] .rmfapp { border-radius: 3px; }
+
+/* «Темы комнаты» — модуль справа от окна */
+.rmstage > .rmthemes { animation-name: rmSideInR; }
+@keyframes rmSideInR { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
+.rmthshare { width: 100%; text-align: center; }
+.rmtheme { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,.04); }
+.rmthtx { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rmthtx b { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rmthtx small { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rmthacts { display: flex; align-items: center; gap: 6px; }
+.rmthacts .nav { flex: 1; padding: 4px 10px; font-size: 12px; text-align: center; }
+.rmthacts .rmact { flex: none; margin-left: auto; }
+:root[data-style="royal"] .rmtheme, :root[data-style="steam"] .rmtheme { border-radius: 3px; }
+/* три панели не влезают — боковые уже */
+@media (max-width: 1100px) and (min-width: 761px) {
+  .rmstage > .rmside { width: 200px; }
+}
+/* узкое окно: модули участников и тем уходят над и под окном комнаты */
 @media (max-width: 760px) {
   .rmstage { flex-direction: column; align-items: center; overflow-y: auto; }
   .rmstage > .rmside { width: min(460px, calc(100vw - 32px)); max-height: 220px; }

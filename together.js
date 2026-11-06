@@ -441,6 +441,7 @@
     if (wasHost !== null && wasHost !== isHost()) roleChanged();
     if (!isHost() && JSON.stringify(snap.playback || null) !== prevPb) guestApply();
     if (isHost()) { onSuggestions(); onMissingHost(); }
+    onThemes();
     // в комнате кто-то новый — он теперь в друзьях (сервер записал при его входе)
     if ((snap.members || []).some((m) => !m.isMe && memberId(m) != null && !friends.some((f) => String(f.id) === String(memberId(m))))) {
       setTimeout(() => loadFriends(), 1500);
@@ -561,6 +562,7 @@
     const wasGuest = room && !room.isHost;
     room = null; code = ""; follow = true; resumeUntil = 0;
     guestFor = null; missingNote = ""; shareAsked = ""; roomShared.clear();
+    invited.clear(); themesSeen.clear(); themesInstalled.clear(); themesPrimed = false;   // «Позван» и темы — только про ту комнату
     myPing = 0; pingSrv = null; pingShowUntil = 0; pingErr = ""; loadChecked = ""; clearTimeout(pingHideTimer);
     unkeep();
     document.body.classList.remove("in-room", "room-guest");
@@ -679,7 +681,7 @@
     while (gen === inboxGen) {
       const t0 = Date.now();
       try {
-        const v = await cmd("wa_room_invites", { since });
+        const v = await cmd("wa_room_invites", { since, app: /^[a-z0-9-]{1,20}$/.test(myProv()) ? myProv() : null });
         if (gen !== inboxGen) return;
         fails = 0;
         const ver = +v?.version || 0;
@@ -918,15 +920,16 @@
   function open() {
     if (panel) return close();
     const wrap = el("div", "login modal");
-    // слева от окна — отдельный модуль «Участники» (виден только в комнате), справа — само окно
+    // слева от окна — «Участники», справа — «Темы комнаты» (обе — только в комнате), посередине — само окно
     const stage = el("div", "rmstage");
     const side = el("aside", "panel login-box rmside"); side.hidden = true;
     const box = el("div", "panel login-box modalbox rmbox");
-    stage.append(side, box); wrap.append(stage); document.body.append(wrap);
+    const themes = el("aside", "panel login-box rmside rmthemes"); themes.hidden = true;
+    stage.append(side, box, themes); wrap.append(stage); document.body.append(wrap);
     const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
     document.addEventListener("keydown", onKey, true);
     wrap.onpointerdown = (e) => { if (e.target === wrap || e.target === stage) close(); };
-    panel = { wrap, box, side, onKey };
+    panel = { wrap, box, side, themes, onKey };
     paint();
   }
   function close() {
@@ -965,33 +968,147 @@
     if (hasKey) inp.focus();
   }
 
-  // «Позвать друзей»: друзья, которых сейчас нет в комнате; без комнаты «Позвать» сначала создаёт её
+  // приложение друга рядом с ником: id провайдера → название (новые сервисы — сюда же; неизвестный — как есть)
+  const APP_LABEL = { yandex: "Яндекс", vk: "VK" };
+  const appLabel = (a) => (a ? APP_LABEL[a] || String(a).slice(0, 12) : "");
+  // статус друга в этой комнате: в комнате / позван / отклонил / не ответил (сервер: members и room.invited)
+  function friendStatus(f) {
+    if (!inRoom()) return null;
+    const id = String(f.id);
+    if ((room.members || []).some((m) => String(memberId(m) ?? "") === id)) return "here";
+    const s = (room.invited || []).find((x) => String(x.userId) === id)?.status;
+    if (s) return s;                                    // pending | declined | expired
+    const was = invited.get(id);                        // позвали только что, снимок с сервера ещё в пути
+    return was && Date.now() - was < 10 * 60e3 ? "pending" : null;
+  }
+  const STATUS = {
+    here: ["В комнате", "Уже слушает с вами"],
+    pending: ["Позван ✓", "Ждём ответа. Нажми, чтобы позвать ещё раз"],
+    declined: ["Отклонил", "Отклонил приглашение. Нажми, чтобы позвать снова"],
+    expired: ["Не ответил", "Приглашение истекло. Нажми, чтобы позвать снова"],
+  };
+  // «Позвать друзей»; без комнаты «Позвать» сначала создаёт её
   function friendsBlock(box) {
-    const here = new Set((room?.members || []).map((m) => String(memberId(m) ?? "")));
-    const list = friends.filter((f) => !here.has(String(f.id)));
-    if (!list.length) return;
+    if (!friends.length) return;
     const sec = el("div", "rmfriends");
     sec.append(el("small", "", inRoom() ? "Позвать друзей" : "Друзья — с ними ты уже слушал вместе"));
     const ul = el("div", "rmflist");
-    // сначала те, у кого приложение открыто
-    for (const f of [...list].sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0))) {
-      const row = el("div", "rmfriend");
-      const dot = el("i", "rmfdot" + (f.online ? " on" : ""));
-      dot.title = f.online ? "Приложение открыто" : "Не в сети";
+    const rank = (f) => (friendStatus(f) === "here" ? 2 : f.online ? 0 : 1);       // в сети — сверху, уже в комнате — внизу
+    for (const f of [...friends].sort((a, b) => rank(a) - rank(b))) {
+      const st = friendStatus(f);
+      const row = el("div", "rmfriend" + (st ? " st-" + st : ""));
+      const dot = el("i", "rmfdot" + (f.online || st === "here" ? " on" : ""));
+      dot.title = st === "here" ? "В комнате" : f.online ? "Приложение открыто" : "Не в сети";
       const name = el("span", "rmfname", f.nickname);
-      name.title = `Слушали вместе: ${f.metCount || 1} ${(f.metCount || 1) % 10 >= 2 && (f.metCount || 1) % 10 <= 4 && ((f.metCount || 1) % 100 < 10 || (f.metCount || 1) % 100 > 20) ? "раза" : "раз"}`;
-      const was = invited.get(String(f.id));
-      const fresh = was && Date.now() - was < 10 * 60e3;
-      const b = el("button", "nav" + (fresh ? "" : " active"), fresh ? "Позван ✓" : "Позвать");
-      b.type = "button";
-      b.title = fresh ? "Позвать ещё раз" : inRoom() ? "Друг получит уведомление в приложении" : "Создать комнату и позвать";
-      b.onclick = () => { b.disabled = true; inviteFriend(f).finally(() => { b.disabled = false; }); };
+      const n = f.metCount || 1, few = n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 > 20);
+      name.title = `Слушали вместе: ${n} ${few ? "раза" : "раз"}`;
+      row.append(dot, name);
+      if (f.app) { const a = el("span", "rmfapp", appLabel(f.app)); a.title = "Слушает через Whisper " + appLabel(f.app); row.append(a); }
+      if (st === "here") row.append(el("span", "rmfstate", STATUS.here[0]));
+      else {
+        const [label, tip] = STATUS[st] || ["Позвать", inRoom() ? "Друг получит уведомление в приложении" : "Создать комнату и позвать"];
+        const b = el("button", "nav" + (st === "pending" ? "" : " active"), label);
+        b.type = "button"; b.title = tip;
+        b.onclick = () => { b.disabled = true; inviteFriend(f).finally(() => { b.disabled = false; }); };
+        row.append(b);
+      }
       const x = el("button", "rmact", "✕"); x.type = "button"; x.title = "Убрать из друзей"; x.onclick = () => forgetFriend(f);
-      row.append(dot, name, b, x);
+      row.append(x);
       ul.append(row);
     }
     sec.append(ul);
     box.append(sec);
+  }
+
+  // ---------- темы комнаты (вкладка справа от окна) ----------
+  // Участник делится своим текущим стилем (.wmt — как «Сохранить в файл…»): файл уходит на сервер архива и живёт,
+  // пока жива комната. Остальные видят его здесь и ставят себе одной кнопкой (тем же путём, что «Загрузить тему…»).
+  // Что собрать и как поставить — знает приложение (kit.themeExport / kit.themeImport).
+  const themesSeen = new Set(), themesInstalled = new Set();
+  let themeBusy = "", themesPrimed = false;     // primed: темы, что были в комнате до твоего входа, — без подсказок
+  const roomThemes = () => (Array.isArray(room?.themes) ? room.themes : []).filter((t) => UUID.test(String(t?.id || "")));
+  async function shareTheme() {
+    if (!inRoom() || themeBusy || typeof kit.themeExport !== "function") return;
+    themeBusy = "share"; paint();
+    try {
+      const t = await kit.themeExport();
+      if (!t?.bytes) throw new Error("стиль не собрался");
+      // файл — сырыми байтами (без JSON-массива на десятки мегабайт), код и имя — в заголовках; обёртка invoke
+      // из приложения передаёт только (cmd, args), поэтому — напрямую в Tauri
+      let r;
+      try {
+        r = await window.__TAURI__.core.invoke("wa_room_theme_share", t.bytes, { headers: {
+          "x-room-code": code, "x-theme-name": encodeURIComponent(t.name || "Тема"), "x-theme-author": encodeURIComponent(t.author || ""),
+        } });
+      } catch (e) { throw e instanceof Error ? e : new Error(String(e)); }
+      let body = null;
+      try { body = r?.body ? JSON.parse(r.body) : null; } catch {}
+      if (!(r?.status >= 200 && r.status < 300)) throw new Error(body?.message || `сервер ответил HTTP ${r?.status}`);
+      if (body?.id) themesSeen.add(String(body.id));
+      showToast(`Тема «${t.name}» теперь в комнате`, 3000, { kind: "ok" });
+    } catch (e) { showToast("Не удалось поделиться темой: " + (e?.message || e), 6000, { kind: "err" }); }
+    finally { themeBusy = ""; paint(); }
+  }
+  async function installTheme(th) {
+    if (!inRoom() || themeBusy || typeof kit.themeImport !== "function") return;
+    themeBusy = th.id; paint();
+    try {
+      const buf = await invoke("wa_room_theme_get", { code, id: String(th.id) });
+      const ok = await kit.themeImport(new Uint8Array(buf));
+      if (ok) themesInstalled.add(String(th.id));
+    } catch (e) { showToast("Тема не скачалась: " + (e?.message || e), 5000, { kind: "err" }); }
+    finally { themeBusy = ""; paint(); }
+  }
+  async function removeTheme(th) {
+    try { await cmd("wa_room_theme_remove", { code, id: String(th.id) }); } catch (e) { showToast("Не удалось убрать тему: " + (e?.message || e), 4000, { kind: "err" }); }
+  }
+  // новые темы от других — подсказка с кнопкой «Установить»
+  function onThemes() {
+    if (!themesPrimed) { themesPrimed = true; for (const th of roomThemes()) themesSeen.add(String(th.id)); return; }
+    for (const th of roomThemes()) {
+      const id = String(th.id);
+      if (themesSeen.has(id)) continue;
+      themesSeen.add(id);
+      if (th.mine) continue;
+      showToast(`${String(th.from || "Участник").slice(0, 40)} делится темой «${th.name}»`, 9000, { action: { label: "Установить", fn: () => installTheme(th) } });
+    }
+  }
+  function paintThemes(side) {
+    side.textContent = "";
+    const list = roomThemes();
+    const head = el("div", "rmsidehead");
+    head.append(el("b", "", "Темы комнаты"), el("span", "rmcount", String(list.length)));
+    side.append(head);
+    const can = typeof kit.themeExport === "function";
+    const sh = el("button", "nav active rmthshare", themeBusy === "share" ? "Отправляется…" : "Поделиться моей темой");
+    sh.type = "button"; sh.disabled = !can || !!themeBusy;
+    sh.title = "Твой текущий стиль оформления (как «Сохранить в файл…») — остальные смогут поставить его себе";
+    sh.onclick = shareTheme;
+    side.append(sh);
+    const ul = el("div", "rmpeople rmthlist");
+    if (!list.length) ul.append(el("p", "rmempty", "Пока никто не делился темой. Поделись своей — остальные поставят её одной кнопкой."));
+    for (const th of list) {
+      const row = el("div", "rmtheme");
+      const tx = el("div", "rmthtx");
+      tx.append(el("b", "", th.name), el("small", "", [th.author && `автор ${th.author}`, th.mine ? "от тебя" : `от ${th.from}`].filter(Boolean).join(" · ")));
+      row.append(tx);
+      const acts = el("div", "rmthacts");
+      if (!th.mine) {
+        const done = themesInstalled.has(String(th.id));
+        const b = el("button", "nav" + (done ? "" : " active"), themeBusy === th.id ? "Ставится…" : done ? "Установлено ✓" : "Установить");
+        b.type = "button"; b.disabled = !!themeBusy || typeof kit.themeImport !== "function";
+        b.onclick = () => installTheme(th);
+        acts.append(b);
+      }
+      if (th.mine || isHost()) {
+        const x = el("button", "rmact", "✕"); x.type = "button"; x.title = "Убрать из комнаты"; x.onclick = () => removeTheme(th);
+        acts.append(x);
+      }
+      row.append(acts);
+      ul.append(row);
+    }
+    side.append(ul);
+    side.append(el("small", "rmhint", "Темы хранятся, пока открыта комната. Установленная тема остаётся у тебя."));
   }
   // приглашения тебе (окно до комнаты): «Войти» — как по ссылке, «✕» — отклонить
   function invitesBlock(box) {
@@ -1255,6 +1372,8 @@
     if (keepStatus) setStatus(keepStatus);
     panel.side.hidden = !inRoom();
     if (inRoom()) paintSide(panel.side); else panel.side.textContent = "";
+    panel.themes.hidden = !inRoom();
+    if (inRoom()) paintThemes(panel.themes); else panel.themes.textContent = "";
   }
 
   // кнопка — та, что приложение уже поставило в разметку (#togetherBtn), иначе своя в начале правого блока плеера

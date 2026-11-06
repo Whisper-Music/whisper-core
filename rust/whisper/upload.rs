@@ -11,6 +11,7 @@ use std::{sync::OnceLock, time::Duration};
 pub const MAX_TRACK_UPLOAD: usize = 100 * 1024 * 1024; // лимит сервера на один трек
 pub const MAX_COVER_UPLOAD: usize = 10 * 1024 * 1024; // лимит сервера на обложку
 pub const MAX_ALBUM_TITLE: usize = 75;
+pub const MAX_THEME_UPLOAD: usize = 64 * 1024 * 1024; // как лимит файла темы в приложении
 
 /// Формат обложки по первым байтам: сервер требует, чтобы расширение совпадало с содержимым.
 pub fn image_kind(b: &[u8]) -> Option<(&'static str, &'static str)> {
@@ -266,6 +267,26 @@ impl Upload {
         let mut form = Multipart::new();
         form.file("file", &track.name, track.mime, track.bytes);
         post_multipart(&format!("/api/rooms/{code}/cache"), &self.token, form).await
+    }
+
+    /// «Слушать вместе»: поделиться темой оформления (.wmt) с комнатой (POST /api/rooms/{code}/themes).
+    /// Файл живёт на сервере, пока жива комната; отвечает `{ id }`.
+    pub async fn to_room_theme(self, code: &str, name: &str, author: &str, bytes: &[u8]) -> Result<WaResponse, String> {
+        let ok = (4..=12).contains(&code.len()) && code.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
+        if !ok {
+            return Err("Некорректный код комнаты".into());
+        }
+        if bytes.len() > MAX_THEME_UPLOAD {
+            return Err("Тема больше 64 МБ".into());
+        }
+        if !bytes.starts_with(b"#WMT") && !bytes.starts_with(b"PK\x03\x04") {
+            return Err("Это не файл темы".into());
+        }
+        let mut form = Multipart::new();
+        form.text("name", &clean_title(name).chars().take(60).collect::<String>());
+        form.text("author", &clean_title(author).chars().take(40).collect::<String>());
+        form.file("file", "theme.wmt", "application/octet-stream", bytes);
+        post_multipart(&format!("/api/rooms/{code}/themes"), &self.token, form).await
     }
 
     /// Новый приватный альбом с обложкой и этим треком (POST /api/albums). `title` — из album_title().
