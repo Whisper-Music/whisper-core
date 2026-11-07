@@ -482,7 +482,8 @@ Whisper.ui.define({
 Что нужно от приложения:
 
 * **Rust-папка `src/core/rust/whisper/`** (общая для всех приложений Whisper, приходит подмодулем): команды
-  `wa_token_exists/set/clear`, `wa_me`, `wa_albums_mine`, `wa_album`, `wa_album_share` (ссылка на свой альбом; у приватного — приглашение), `wa_stream` (в `whisper::`), `wa_auth_request_code`,
+  `wa_token_exists/set/clear`, `wa_me`, `wa_albums_mine`, `wa_album`, `wa_album_share` (ссылка на свой альбом; у приватного — приглашение), `wa_invite_open` (открыть чужой приватный
+  альбом по ключу приглашения: лайк с cookie приглашения — и альбом доступен ключу приложения), `wa_stream` (в `whisper::`), `wa_auth_request_code`,
   `wa_auth_issue` (`whisper::auth::`), `wa_prefetch` (`whisper::stream::`) и протокол `wa://`
   (в `lib.rs` — `register_asynchronous_uri_scheme_protocol("wa", …)` → `whisper::stream::serve_stream`), плюс разрешения в
   `build.rs` и `capabilities`. Своё у приложения — только `src-tauri/src/whisper_host.rs` (образец — `rust/whisper_host.example.rs`): где лежит ключ (`token_get/set/clear`),
@@ -544,7 +545,8 @@ API для других модулей: `Whisper.modules.archive` — `login(rea
   ответ `{ id }`). Файл живёт, пока открыта комната, и не дольше 30 минут после того, как последний раз играл; до 8 файлов
   и 400 МБ на комнату. С дополнительной галочкой «Сохранять их в мой архив» (`ym_room_share_save`) — или если у провайдера
   нет `roomCache` — вместо этого `Whisper.modules.archive.share(track)`: трек ложится в приватный альбом «Слушать вместе».
-  Трек уже есть в архиве ведущего — отдаётся он, без загрузки. В любом случае id уходит гостям как `archiveId`,
+  Трек уже есть в архиве ведущего — отдаётся он, без загрузки. Если `provider.localOnly(track)` — true (трек есть только
+  у ведущего, например своя обрезанная версия), ведущий делится сразу, без галочки. В любом случае id уходит гостям как `archiveId`,
   и у гостя трек играет по `/api/tracks/{id}/stream`: сервер отдаёт либо трек архива, либо файл кэша комнаты. Так же «нет у меня» — если трек комнаты не заиграл с сервиса
   (ошибка плеера при источнике `provider`). Предложения гостей ведущий сопоставляет со своим сервисом так же.
 * **Статус позванных друзей.** В снимке комнаты (для участников) — `room.invited: [{ userId, status, at }]`, где `status` —

@@ -291,7 +291,9 @@
     const who = ms.members.join(", ");
     const can = canShare();
     // сам — только если прошлая попытка с этим треком не сорвалась (иначе ошибка повторялась бы с каждым снимком)
-    if (shareOn && can && shareFailed !== k) return shareTrack(t);
+    // трек есть только у ведущего (provider.localOnly — например, своя обрезанная версия): ждать нечего, делимся сразу
+    const only = !!W.provider()?.localOnly?.(t);
+    if ((shareOn || only) && can && shareFailed !== k) return shareTrack(t);
     if (shareAsked === k) return;
     shareAsked = k;
     showToast(`У ${who} нет «${t.title}» на площадке` + (can ? "" : " — поделиться можно через Whisper Archive"), 9000,

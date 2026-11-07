@@ -219,6 +219,52 @@ pub async fn wa_album_share(id: String) -> Result<WaResponse, String> {
     Ok(WaResponse { status, body: String::from_utf8_lossy(&bytes).into_owned() })
 }
 
+/// Открыть чужой приватный альбом по ссылке-приглашению (whisper://wa/{альбом}?k={ключ} — так делятся своей версией трека).
+/// Сайт пускает по приглашению через cookie `WArchive.Invite.{альбом}`; у приложения cookie нет, поэтому ключ
+/// приглашения уходит этим же заголовком, но только в эти два запроса и не сохраняется. Лайк альбома (PUT …/like) —
+/// так сервер запоминает доступ для ключа приложения (AlbumAccessService: лайк при действующей ссылке), иначе
+/// поток трека (wa://, без cookie) не откроется. Свой альбом лайкнуть нельзя — он и так доступен.
+/// Ответ — альбом (как wa_album).
+#[tauri::command]
+pub async fn wa_invite_open(id: String, key: String) -> Result<WaResponse, String> {
+    if !is_uuid(&id) {
+        return Err("Некорректный id альбома".into());
+    }
+    if !(20..=200).contains(&key.len()) || !key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Err("Некорректная ссылка-приглашение".into());
+    }
+    let id = id.to_ascii_lowercase();
+    let token = read_token()?;
+    let cookie = format!("WArchive.Invite.{id}={key}");
+    let like = json_client()
+        .put(api_url(&format!("/api/albums/{id}/like"))?)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Cookie", &cookie)
+        .header("Accept", "application/json")
+        .header("Content-Length", "0")
+        .send()
+        .await
+        .map_err(|e| format!("Whisper Archive недоступен: {e}"))?;
+    let like_status = like.status().as_u16();
+    // 400 — свой альбом (лайкнуть нельзя, но он и так открыт); остальное — ниже скажет сам альбом
+    let _ = read_limited(like, MAX_JSON_BODY).await;
+    let resp = json_client()
+        .get(api_url(&format!("/api/albums/{id}"))?)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Cookie", &cookie)
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Whisper Archive недоступен: {e}"))?;
+    let status = resp.status().as_u16();
+    let bytes = read_limited(resp, MAX_JSON_BODY).await?;
+    if (200..300).contains(&status) && !(200..300).contains(&like_status) && like_status != 400 {
+        // альбом открылся, а лайк не встал — по ключу приложения поток не пустят; лучше сказать сразу
+        return Ok(WaResponse { status: 409, body: format!("{{\"message\":\"архив не сохранил доступ (HTTP {like_status})\"}}") });
+    }
+    Ok(WaResponse { status, body: String::from_utf8_lossy(&bytes).into_owned() })
+}
+
 /// Профиль владельца ключа (GET /api/auth/me) — только чтобы показать никнейм.
 #[tauri::command]
 pub async fn wa_me() -> Result<WaResponse, String> {
