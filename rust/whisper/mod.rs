@@ -197,6 +197,28 @@ pub async fn wa_album(id: String) -> Result<WaResponse, String> {
     get_json(&format!("/api/albums/{id}")).await
 }
 
+/// Ссылка, чтобы поделиться своим альбомом (POST /api/albums/{uuid}/share): у приватного сервер сам
+/// создаёт приглашение (/invite/…), у публичного — обычная страница альбома. Ответ — { url, visibility, expiresAt }.
+#[tauri::command]
+pub async fn wa_album_share(id: String) -> Result<WaResponse, String> {
+    if !is_uuid(&id) {
+        return Err("Некорректный id альбома".into());
+    }
+    let url = api_url(&format!("/api/albums/{id}/share"))?;
+    let token = read_token()?;
+    let resp = json_client()
+        .post(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .header("Content-Length", "0")
+        .send()
+        .await
+        .map_err(|e| format!("Whisper Archive недоступен: {e}"))?;
+    let status = resp.status().as_u16();
+    let bytes = read_limited(resp, MAX_JSON_BODY).await?;
+    Ok(WaResponse { status, body: String::from_utf8_lossy(&bytes).into_owned() })
+}
+
 /// Профиль владельца ключа (GET /api/auth/me) — только чтобы показать никнейм.
 #[tauri::command]
 pub async fn wa_me() -> Result<WaResponse, String> {

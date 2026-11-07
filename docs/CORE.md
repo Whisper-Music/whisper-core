@@ -482,7 +482,7 @@ Whisper.ui.define({
 Что нужно от приложения:
 
 * **Rust-папка `src/core/rust/whisper/`** (общая для всех приложений Whisper, приходит подмодулем): команды
-  `wa_token_exists/set/clear`, `wa_me`, `wa_albums_mine`, `wa_album`, `wa_stream` (в `whisper::`), `wa_auth_request_code`,
+  `wa_token_exists/set/clear`, `wa_me`, `wa_albums_mine`, `wa_album`, `wa_album_share` (ссылка на свой альбом; у приватного — приглашение), `wa_stream` (в `whisper::`), `wa_auth_request_code`,
   `wa_auth_issue` (`whisper::auth::`), `wa_prefetch` (`whisper::stream::`) и протокол `wa://`
   (в `lib.rs` — `register_asynchronous_uri_scheme_protocol("wa", …)` → `whisper::stream::serve_stream`), плюс разрешения в
   `build.rs` и `capabilities`. Своё у приложения — только `src-tauri/src/whisper_host.rs` (образец — `rust/whisper_host.example.rs`): где лежит ключ (`token_get/set/clear`),
