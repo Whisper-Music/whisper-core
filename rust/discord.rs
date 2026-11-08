@@ -55,6 +55,9 @@ pub struct Track {
     pub duration_ms: u64,
     pub position_ms: u64,
     pub playing: bool,
+    // "together" — в комнате «Слушать вместе», "sleep" — режим сна; пусто — просто слушает.
+    // (старые версии страницы поля не шлют — выручает default у структуры)
+    pub mode: String,
 }
 
 #[derive(Default)]
@@ -339,7 +342,15 @@ fn activity(t: &Track, at: u64, cfg: &Config, with_display: bool) -> Value {
     let mut a = json!({
         "type": 2, // «Слушает»
         "details": fit(&if t.playing { t.title.clone() } else { format!("⏸ {}", t.title) }),
-        "state": fit(&if t.playing { artist.to_string() } else { format!("На паузе · {artist}") }),
+        "state": fit(&if !t.playing {
+            format!("На паузе · {artist}")
+        } else {
+            match t.mode.as_str() {
+                "together" => format!("Слушает вместе · {artist}"),
+                "sleep" => format!("Засыпает · {artist}"),
+                _ => artist.to_string(),
+            }
+        }),
         "assets": {},
     });
     if with_display && cfg.title_status {

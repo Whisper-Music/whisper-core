@@ -54,8 +54,16 @@
       durationMs: Math.round(dur / r),
       positionMs: Math.round(((m.time || 0) * 1000) / r),
       playing: isPlaying(),
+      mode: mode(),
     };
   }
+  // что человек сейчас делает, кроме «слушает»: комната (core/together.js) главнее режима сна (kit.sleeping от приложения)
+  function mode() {
+    if (window.roomInfo?.()) return "together";
+    if (kit.sleeping?.()) return "sleep";
+    return "";
+  }
+  const MODE_TEXT = { together: "Слушает вместе", sleep: "Засыпает" };
   // смена трека, пауза/воспроизведение, перемотка, скорость — от ядра (Whisper.player.watch)
   function push(force) {
     const m = media();
@@ -86,7 +94,7 @@
     if (s !== stuck) { stuck = s; push(true); return; }
     const cur = snapshot();
     if (!cur) { if (sent) push(true); return; }
-    if (!sent || cur.playing !== sent.playing || cur.id !== sent.id) { push(true); return; }
+    if (!sent || cur.playing !== sent.playing || cur.id !== sent.id || cur.mode !== sent.mode) { push(true); return; }
     if (cur.playing) {
       const expected = sent.positionMs + (now - sentAt);
       if (Math.abs(cur.positionMs - expected) > DRIFT_MS) push(true);
@@ -216,7 +224,8 @@
     const title = t.title || "Без названия";
     m.p1.textContent = playing ? title : "⏸ " + title;
     const artist = t.artists.map((a) => a.name).filter(Boolean).join(", ") || "Неизвестный исполнитель";
-    m.p2.textContent = playing ? artist : "На паузе · " + artist;
+    const md = MODE_TEXT[mode()];
+    m.p2.textContent = !playing ? "На паузе · " + artist : md ? md + " · " + artist : artist;
     m.p3.textContent = t.album?.title || "";
     m.p3.hidden = !dc.cover || !m.p3.textContent;
     const dur = mm.duration > 0 ? mm.duration * 1000 : t.durationMs || 0;
