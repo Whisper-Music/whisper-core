@@ -741,6 +741,22 @@
     // «Слушать вместе»: id трека в архиве, при необходимости трек сначала сохраняется (альбом «Слушать вместе»)
     share: (t) => shareForRoom(t),
     canShare: () => st.hasToken && typeof W.provider()?.archiveSave === "function",
+    // включена ли «Играть треки из архива» (без неё сохранённый трек не подменяет версию сервиса)
+    playing: () => st.on,
+    // свои альбомы: [{ id, title, count, pub }] — для окон приложения, куда класть трек (перетащенный файл и т. п.)
+    albums: async () => listOf(await waGet("wa_albums_mine")).map((a) => ({
+      id: String(pick(a, "id") ?? ""), title: nameOf(pick(a, "title")) || "Без названия",
+      count: Number(pick(a, "trackCount")) || 0, pub: String(pick(a, "visibility") || "").toLowerCase() === "public",
+    })).filter((a) => UUID.test(a.id)),
+    // трек сохранили в архив в обход меню (перетащенный файл, приложение само загрузило): r — ответ сервера.
+    // Трек сразу попадает в список (как после «Сохранить в архив») — t, если задан, это трек сервиса, вместо которого он играет
+    remember: async (t, r) => {
+      const id = await savedId(r?.body);
+      if (t) addSaved(W.to("track", t), id);
+      st.failAt = 0;
+      sync(true).then(() => note(summary())).catch(() => {});
+      return id;
+    },
   };
 
   // ---------- старт ----------

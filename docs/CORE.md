@@ -511,7 +511,10 @@ Whisper.ui.define({
 * Окно входа использует общие классы оформления: `.login.modal`, `.panel.login-box.modalbox`, `.field`, `.nav`, `.row`,
   `.status`. В другом приложении их стоит оформить или переопределить `.wamodal`.
 
-API для других модулей: `Whisper.modules.archive` — `login(reason)`, `enabled()`, `connected()`, `lookup(track)`, `sync()`.
+API для других модулей: `Whisper.modules.archive` — `login(reason)`, `enabled()`, `connected()`, `lookup(track)`, `sync()`,
+`playing()` (включена ли «Играть треки из архива»), `albums()` (свои альбомы `[{ id, title, count, pub }]`) и
+`remember(track | null, response)` — трек загрузило само приложение (например, перетащенный файл): он сразу попадает в
+список и, если передан трек сервиса, играет вместо него.
 Старое имя `window.waLogin` оставлено: им пользуется «Слушать вместе».
 
 ### `core/together.js` + `core/together.css` — «Слушать вместе»
