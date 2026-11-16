@@ -83,7 +83,19 @@
     const layouts = Array.isArray(s.layouts) ? s.layouts.filter((l) => ["card", "compact", "bar"].includes(l)) : [];
     const ok = (n) => typeof n === "number" && isFinite(n) && n >= 40 && n <= 4000;
     const size = Array.isArray(s.size) && ok(s.size[0]) && ok(s.size[1]) ? s.size.map(Math.round) : null;
-    return { layouts, size };
+    const layout = ["card", "compact", "bar"].includes(s.layout) ? s.layout : "";
+    return { layouts, size, layout };
+  }
+  // стандартные размеры источника — одни на все стили (поле виджета внутри — на 24 px меньше, см. widget.html),
+  // поэтому стиль можно сменить, не трогая источник в OBS
+  const SIZES = { card: [640, 220], compact: [480, 120], bar: [560, 60] };
+  function sizeNote(th) {
+    if (th.size) return `Размер для этого стиля: ${th.size[0]} × ${th.size[1]}.`;   // старые темы со своим размером
+    const ok = (l) => !th.layouts.length || th.layouts.includes(l);
+    let l = o.layout !== "style" && ok(o.layout) ? o.layout : th.layout || "card";
+    if (!ok(l)) l = th.layouts[0];
+    const [w, h] = SIZES[l] || SIZES.card;
+    return `Размер: ${w} × ${h} — одинаковый у всех стилей.`;
   }
 
   // смена трека, пауза, перемотка, скорость — от ядра
@@ -119,7 +131,7 @@
     n.textContent = err
       ? "Виджет не запустился: " + err
       : "В OBS: Источники → «+» → Браузер → вставь адрес. " +
-        (th.size ? `Размер для этого стиля: ${th.size[0]} × ${th.size[1]}.` : "Размер: 520 × 130 (для «Полоски» — 560 × 60).");
+        sizeNote(th);
   }
   async function apply() {
     let err = "";

@@ -18,6 +18,9 @@
       .w-deco > i×6        пустые элементы для декора темы (ручки, решётки, лампочки); по умолчанию скрыты
       .w-viz > i×32        «живой» визуализатор из 32 столбиков; по умолчанию скрыт. У каждого i: --i (номер 0…31),
                            --h (постоянный «рельеф» 0.35…1), --lv (текущий уровень 0…1, меняется ~15 раз в секунду)
+  Размеры — стандартные для всех стилей (источник «Браузер» в OBS / поле карточки внутри, минус отступ страницы 12 px):
+    card 640 × 220 / 616 × 196,  compact 480 × 120 / 456 × 96,  bar 560 × 60 / 536 × 36.
+    Тема рисует всё, включая декор, внутри поля — тогда стили меняются без перенастройки источника в OBS.
   Переменные на #w: --a, --b (цвета стиля или обложки), --alpha (непрозрачность фона, 0…1),
                     --p (прогресс 0…1), --cover (url обложки), --beat (пульс «удара» 0…1, пока играет).
 -->
@@ -33,9 +36,9 @@
 
   .w {
     --a: #a66bff; --b: #e060ff; --alpha: .55; --p: 0; --r: 20px;
-    position: relative; display: flex; align-items: center; gap: 14px;
-    width: max-content; max-width: calc(100vw - 24px); min-width: 280px;
-    padding: 12px 18px 12px 12px; border-radius: var(--r); isolation: isolate;
+    position: relative; display: flex; align-items: center; gap: 18px; box-sizing: border-box;
+    width: 616px; height: 196px; min-width: 0; max-width: none;
+    padding: 12px 24px 12px 12px; border-radius: var(--r); isolation: isolate;
     transition: opacity .5s ease, transform .5s cubic-bezier(.2,.8,.2,1);
   }
   .w[data-empty], .w[data-paused-hidden] { opacity: 0; transform: translateY(10px) scale(.98); }
@@ -48,22 +51,22 @@
     box-shadow: 0 10px 30px rgba(0,0,0,.35);
     -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
   }
-  .w-art { position: relative; flex: none; width: 76px; height: 76px; }
+  .w-art { position: relative; flex: none; width: 172px; height: 172px; }
   .w-cover {
     width: 100%; height: 100%; object-fit: cover; border-radius: calc(var(--r) * .6); display: block;
     background: rgba(255,255,255,.08); box-shadow: 0 4px 14px rgba(0,0,0,.4);
     transition: opacity .35s ease;
   }
   .w-cover.swap { opacity: 0; }
-  .w-info { min-width: 0; display: flex; flex-direction: column; gap: 3px; width: 300px; }
-  .w-title { font-size: 18px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 6px rgba(0,0,0,.5); }
-  .w-artist { font-size: 14px; opacity: .78; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
-  .w-bar { margin-top: 6px; height: 4px; border-radius: 4px; background: rgba(255,255,255,.18); overflow: hidden; }
+  .w-info { min-width: 0; display: flex; flex-direction: column; gap: 4px; flex: 1 1 auto; }
+  .w-title { font-size: 26px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 6px rgba(0,0,0,.5); }
+  .w-artist { font-size: 17px; opacity: .78; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .w-bar { margin-top: 12px; height: 5px; border-radius: 4px; background: rgba(255,255,255,.18); overflow: hidden; }
   .w-bar i { display: block; height: 100%; width: calc(var(--p) * 100%); border-radius: inherit;
     background: linear-gradient(90deg, var(--a), var(--b)); box-shadow: 0 0 10px var(--a); }
-  .w-time { display: flex; justify-content: space-between; font-size: 11px; opacity: .65; font-variant-numeric: tabular-nums; }
-  .w-eq { flex: none; display: flex; align-items: flex-end; gap: 3px; height: 22px; align-self: center; }
-  .w-eq i { width: 4px; height: 25%; border-radius: 2px; background: linear-gradient(var(--b), var(--a)); transition: height .3s; }
+  .w-time { display: flex; justify-content: space-between; font-size: 13px; opacity: .65; font-variant-numeric: tabular-nums; }
+  .w-eq { flex: none; display: flex; align-items: flex-end; gap: 4px; height: 34px; align-self: center; }
+  .w-eq i { width: 5px; height: 25%; border-radius: 2px; background: linear-gradient(var(--b), var(--a)); transition: height .3s; }
   .w[data-playing] .w-eq i { animation: eq 1s ease-in-out infinite alternate; }
   .w[data-playing] .w-eq i:nth-child(2) { animation-duration: .8s; animation-delay: -.3s; }
   .w[data-playing] .w-eq i:nth-child(3) { animation-duration: 1.15s; animation-delay: -.6s; }
@@ -83,17 +86,17 @@
   .w.swapping .w-info > * { opacity: 0; transform: translateX(-6px); }
 
   /* компактный: без прогресса и времени */
-  .w[data-layout="compact"] { padding: 8px 14px 8px 8px; gap: 10px; }
-  .w[data-layout="compact"] .w-art { width: 46px; height: 46px; }
+  .w[data-layout="compact"] { width: 456px; height: 96px; padding: 10px 22px 10px 10px; gap: 14px; }
+  .w[data-layout="compact"] .w-art { width: 76px; height: 76px; }
   .w[data-layout="compact"] .w-bar, .w[data-layout="compact"] .w-time { display: none; }
-  .w[data-layout="compact"] .w-info { width: 240px; }
-  .w[data-layout="compact"] .w-title { font-size: 15px; }
-  .w[data-layout="compact"] .w-artist { font-size: 12px; }
+  .w[data-layout="compact"] .w-title { font-size: 19px; }
+  .w[data-layout="compact"] .w-artist { font-size: 14px; }
+  .w[data-layout="compact"] .w-eq { height: 24px; }
   /* полоска: одна строка «Исполнитель — Название» и тонкий прогресс снизу */
-  .w[data-layout="bar"] { padding: 8px 16px; gap: 10px; --r: 999px; }
+  .w[data-layout="bar"] { width: 536px; height: 36px; padding: 3px 16px 3px 4px; gap: 10px; --r: 999px; }
   .w[data-layout="bar"] .w-art { width: 30px; height: 30px; }
   .w[data-layout="bar"] .w-cover { border-radius: 50%; }
-  .w[data-layout="bar"] .w-info { flex-direction: row; align-items: baseline; gap: 8px; width: auto; max-width: 420px; }
+  .w[data-layout="bar"] .w-info { flex-direction: row; align-items: baseline; gap: 8px; }
   .w[data-layout="bar"] .w-info > * { min-width: 0; flex: 0 1 auto; }
   .w[data-layout="bar"] .w-artist { flex-shrink: 2; }
   .w[data-layout="bar"] .w-title { font-size: 15px; }
