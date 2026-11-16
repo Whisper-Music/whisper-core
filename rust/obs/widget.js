@@ -60,7 +60,38 @@
       w.style.setProperty("--p", (pos / s.dur).toFixed(4));
       q(".w-cur").textContent = fmt(pos);
     }
+    viz();
     requestAnimationFrame(tick);
+  }
+
+  // «живой» визуализатор .w-viz: настоящего звука у страницы нет, поэтому уровни — сглаженный шум
+  // с пульсом «удара» (~120 bpm, сильнее в левых столбиках). Тема решает, как столбики выглядят и сколько их видно.
+  const VN = 32, vbox = q(".w-viz"), vbars = [], vv = new Float32Array(VN);
+  if (vbox) {
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < VN; i++) {
+      const e = document.createElement("i");
+      // рельеф: плавная волна + немного случайности — у каждого столбика свой «рост»
+      const h = 0.55 + 0.3 * Math.sin(i * 0.55 + 1.3) * Math.sin(i * 0.17) + 0.25 * rnd();
+      e.style.setProperty("--i", i);
+      e.style.setProperty("--h", Math.min(1, Math.max(0.35, h)).toFixed(3));
+      vbox.appendChild(e); vbars.push(e);
+    }
+  }
+  let vAt = 0;
+  function viz() {
+    const now = performance.now();
+    if (!vbars.length || now - vAt < 66) return;
+    vAt = now;
+    const on = !!(s && s.has && s.playing);
+    const ph = (now % 500) / 500, beat = on ? Math.exp(-ph * 5) : 0;
+    w.style.setProperty("--beat", beat.toFixed(3));
+    for (let i = 0; i < VN; i++) {
+      const target = on ? 0.12 + 0.6 * Math.pow(Math.random(), 1.6) + 0.4 * beat * (1 - (i / VN) * 0.6) : 0.05;
+      vv[i] += (Math.min(1, target) - vv[i]) * (on ? 0.5 : 0.2);
+      vbars[i].style.setProperty("--lv", vv[i].toFixed(3));
+    }
   }
   requestAnimationFrame(tick);
 

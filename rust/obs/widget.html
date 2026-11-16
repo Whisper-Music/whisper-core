@@ -16,8 +16,10 @@
       .w-eq > i×4          «эквалайзер», пляшет, пока играет
       .w-play > i          значок «плей» (на паузе) / «пауза» (играет); по умолчанию скрыт — тема включает и ставит его
       .w-deco > i×6        пустые элементы для декора темы (ручки, решётки, лампочки); по умолчанию скрыты
+      .w-viz > i×32        «живой» визуализатор из 32 столбиков; по умолчанию скрыт. У каждого i: --i (номер 0…31),
+                           --h (постоянный «рельеф» 0.35…1), --lv (текущий уровень 0…1, меняется ~15 раз в секунду)
   Переменные на #w: --a, --b (цвета стиля или обложки), --alpha (непрозрачность фона, 0…1),
-                    --p (прогресс 0…1), --cover (url обложки).
+                    --p (прогресс 0…1), --cover (url обложки), --beat (пульс «удара» 0…1, пока играет).
 -->
 <html lang="ru">
 <head>
@@ -68,7 +70,10 @@
   .w[data-playing] .w-eq i:nth-child(4) { animation-duration: .9s; animation-delay: -.15s; }
   @keyframes eq { from { height: 20%; } to { height: 100%; } }
   /* значок состояния и декор — есть в разметке всегда, показывает их CSS темы (display и место — её дело) */
-  .w-play, .w-deco { display: none; }
+  .w-play, .w-deco, .w-viz { display: none; }
+  .w-viz { align-items: flex-end; gap: 2px; height: 40px; }
+  .w-viz i { display: block; flex: 1 1 0; min-width: 1px; height: 100%; transform-origin: 50% 100%;
+    transform: scaleY(calc(.06 + var(--lv, .1) * var(--h, 1) * .94)); transition: transform .09s linear; background: var(--a); }
   .w-play { place-items: center; width: 40px; height: 40px; color: #fff; }
   .w-play i { display: block; width: 40%; height: 46%; margin-left: 8%; background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%); }
   .w[data-playing] .w-play i { margin-left: 0; width: 38%; clip-path: none; background: linear-gradient(90deg, currentColor 0 34%, transparent 34% 66%, currentColor 66%); }
@@ -129,6 +134,7 @@
     </div>
     <div class="w-eq"><i></i><i></i><i></i><i></i></div>
     <div class="w-play" aria-hidden="true"><i></i></div>
+    <div class="w-viz" aria-hidden="true"></div>
     <div class="w-deco" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
   </div>
 <script src="/widget.js"></script>
