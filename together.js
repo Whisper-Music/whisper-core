@@ -728,6 +728,14 @@
     try { hasKey = await invoke("wa_token_exists"); } catch {}
     if (hasKey) loadFriends(true);
   }, 2500);
+  // для вкладки «Друзья» (core/friends.js): позвать друга (без комнаты — она создаётся), его статус в комнате,
+  // обновить список «кого звать» (добавили или убрали друга — заодно начать ждать приглашений)
+  W.modules.together = {
+    invite: (f) => inviteFriend({ id: String(f?.id || ""), nickname: String(f?.nickname || "Друг") }),
+    inRoom: () => inRoom(),
+    status: (id) => friendStatus({ id }),
+    refresh: () => loadFriends(true),
+  };
 
   window.__TAURI__.event?.listen("room-link", () => takeLink());
   setTimeout(takeLink, 1200);        // приложение запустили по ссылке — окно и вход к этому времени готовы
@@ -1035,7 +1043,7 @@
   function friendsBlock(box) {
     if (!friends.length) return;
     const sec = el("div", "rmfriends");
-    sec.append(el("small", "", inRoom() ? "Позвать друзей" : "Друзья — с ними ты уже слушал вместе"));
+    sec.append(el("small", "", inRoom() ? "Позвать друзей" : "Друзья и те, с кем ты уже слушал вместе"));
     const ul = el("div", "rmflist");
     const rank = (f) => (friendStatus(f) === "here" ? 2 : f.online ? 0 : 1);       // в сети — сверху, уже в комнате — внизу
     for (const f of [...friends].sort((a, b) => rank(a) - rank(b))) {
@@ -1044,8 +1052,8 @@
       const dot = el("i", "rmfdot" + (f.online || st === "here" ? " on" : ""));
       dot.title = st === "here" ? "В комнате" : f.online ? "Приложение открыто" : "Не в сети";
       const name = el("span", "rmfname", f.nickname);
-      const n = f.metCount || 1, few = n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 > 20);
-      name.title = `Слушали вместе: ${n} ${few ? "раза" : "раз"}`;
+      const n = f.metCount || 0, few = n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 > 20);
+      name.title = n ? `Слушали вместе: ${n} ${few ? "раза" : "раз"}` : "Друг";
       row.append(dot, name);
       if (f.app) { const a = el("span", "rmfapp", appLabel(f.app)); a.title = "Слушает через Whisper " + appLabel(f.app); row.append(a); }
       if (st === "here") row.append(el("span", "rmfstate", STATUS.here[0]));
@@ -1056,8 +1064,11 @@
         b.onclick = () => { b.disabled = true; inviteFriend(f).finally(() => { b.disabled = false; }); };
         row.append(b);
       }
-      const x = el("button", "rmact", "✕"); x.type = "button"; x.title = "Убрать из друзей"; x.onclick = () => forgetFriend(f);
-      row.append(x);
+      // добавленных в друзья убирают во вкладке «Друзья» (core/friends.js); здесь ✕ — только у «слушали вместе»
+      if (!f.friend) {
+        const x = el("button", "rmact", "✕"); x.type = "button"; x.title = "Убрать из списка"; x.onclick = () => forgetFriend(f);
+        row.append(x);
+      }
       ul.append(row);
     }
     sec.append(ul);

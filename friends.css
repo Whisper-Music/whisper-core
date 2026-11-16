@@ -1,0 +1,99 @@
+/* core/friends.js — страница «Друзья». Только переменные стиля: цвета темы действуют и здесь. */
+#friendsPage [hidden] { display: none !important; }
+.friends { display: flex; flex-direction: column; gap: 18px; padding: 4px 2px 24px; max-width: 980px; }
+
+/* поиск */
+.friends .frfind { display: flex; gap: 8px; align-items: center; }
+.friends .frq { flex: 1; min-width: 0; }
+
+/* секции и строки */
+.friends .frsec { display: flex; flex-direction: column; gap: 6px; }
+.friends .frsec > h3 { margin: 0 0 4px; font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--muted); text-transform: uppercase; }
+.friends .frrow {
+  display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.friends .frrow.open { cursor: pointer; }
+.friends .frrow.open:hover, .friends .frrow.open:focus-visible { background: color-mix(in srgb, var(--accent) 14%, transparent); outline: none; }
+.friends .frtx { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.friends .frtx b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-weight: 600; }
+.friends .frtx small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.friends .fracts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.friends .fracts .nav { padding: 6px 12px; }
+.friends .frmore { min-width: 32px; padding: 6px 8px !important; opacity: .6; }
+.friends .frmore:hover { opacity: 1; }
+.friends .frnote { margin: 0; color: var(--muted); font-size: 12px; }
+.friends .frnote.err { color: var(--accent2); }
+.friends .frempty { color: var(--muted); display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.friends .frempty p { margin: 0; }
+.friends .frclear { align-self: flex-start; opacity: .8; }
+
+/* аватар: буква, поверх — картинка; точка «в сети» */
+.friends .frav {
+  position: relative; flex: none; width: 40px; height: 40px; border-radius: 50%;
+  display: grid; place-items: center; overflow: visible;
+  background: linear-gradient(135deg, var(--accent), var(--accent2)); color: var(--on-accent, #fff);
+}
+.friends .frav b { font-size: 17px; font-weight: 700; }
+.friends .frav img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.friends .frav.img b { visibility: hidden; }
+.friends .frav.big { width: 96px; height: 96px; }
+.friends .frav.big b { font-size: 40px; }
+.friends .frdot {
+  position: absolute; right: -1px; bottom: -1px; z-index: 1; width: 11px; height: 11px; border-radius: 50%;
+  background: var(--muted); border: 2px solid var(--bg, #111);
+}
+.friends .frdot.on { background: #3ecf6e; }
+
+/* профиль друга */
+.friends .frback { display: flex; }
+.friends .frhead { display: flex; gap: 18px; align-items: center; }
+.friends .frhead h3 { margin: 0; font-size: 24px; color: var(--text); overflow-wrap: anywhere; }
+.friends .frhead .fracts { justify-content: flex-start; margin-top: 10px; }
+.friends .fralbums { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.friends .fralbum {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 12px; cursor: pointer;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.friends .fralbum:hover, .friends .fralbum:focus-visible, .friends .fralbum.on { background: color-mix(in srgb, var(--accent) 16%, transparent); outline: none; }
+.friends .frcover {
+  display: block; aspect-ratio: 1; border-radius: 8px; overflow: hidden;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 40%, transparent), color-mix(in srgb, var(--accent2) 40%, transparent));
+}
+.friends .frcover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* треки открытого альбома — во всю ширину сетки, сразу под карточкой */
+.friends .fraltracks {
+  grid-column: 1 / -1; display: flex; flex-direction: column; gap: 2px; padding: 8px; border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.friends .fraltracks > .fracts { justify-content: flex-start; margin-bottom: 6px; }
+.friends .frtrack { display: flex; gap: 12px; align-items: center; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.friends .frtrack:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.friends .frn { width: 22px; text-align: right; color: var(--muted); font-size: 12px; }
+.friends .frt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.friends .frd { color: var(--muted); font-size: 12px; }
+
+/* новые заявки — число на кнопке «Друзья» в боковой панели */
+#friendsBtn[data-badge] { position: relative; }
+#friendsBtn[data-badge]::after {
+  content: attr(data-badge); position: absolute; top: 50%; right: 10px; transform: translateY(-50%);
+  min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box; border-radius: 9px;
+  font-size: 11px; line-height: 18px; text-align: center; font-weight: 700;
+  background: var(--accent2); color: var(--on-accent, #fff);
+}
+
+/* узкая боковая панель (одни значки) — число в углу кнопки */
+html:root[data-ly-sb="mini"] #friendsBtn[data-badge]::after, html:root[data-ly-ui="super"] #friendsBtn[data-badge]::after {
+  top: 2px; right: 2px; transform: none; min-width: 14px; height: 14px; padding: 0 3px; font-size: 9px; line-height: 14px; border-radius: 7px;
+}
+
+/* встроенные стили с квадратными углами */
+:root[data-base="royal"] .friends .frrow, :root[data-base="steam"] .friends .frrow,
+:root[data-base="royal"] .friends .fralbum, :root[data-base="steam"] .friends .fralbum,
+:root[data-base="royal"] .friends .fraltracks, :root[data-base="steam"] .friends .fraltracks { border-radius: 0; }
+
+@media (max-width: 640px) {
+  .friends .frrow { flex-wrap: wrap; }
+  .friends .fracts { width: 100%; justify-content: flex-start; }
+  .friends .frhead { flex-direction: column; align-items: flex-start; }
+}

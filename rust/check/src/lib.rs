@@ -53,6 +53,18 @@ pub async fn api_surface(req: tauri::http::Request<Vec<u8>>) {
     let _ = whisper::upload::album_title(Some("x"));
     let _ = whisper::upload::TrackFile::new("x", b"ID3");
     let _ = whisper::upload::MAX_TRACK_UPLOAD;
+    let _ = whisper::library::upload_file("yandex", "studio-1", "x", b"ID3").await;
+    let _ = whisper::library::download_file("yandex", "studio-1").await;
+    let _ = whisper::library::wa_lib_list("yandex".into(), 0).await;
+    let _ = whisper::library::wa_lib_changes("yandex".into(), serde_json::json!({})).await;
+    let _ = whisper::library::key_ok("studio-1");
+    let _ = whisper::friends::wa_friends_list().await;
+    let _ = whisper::friends::wa_friends_search("x".into()).await;
+    let _ = whisper::friends::wa_friend_request("x".into()).await;
+    let _ = whisper::friends::wa_friend_accept("x".into()).await;
+    let _ = whisper::friends::wa_friend_remove("x".into()).await;
+    let _ = whisper::friends::wa_user_profile("x".into()).await;
+    let _ = whisper::friends::wa_image("avatar".into(), "x".into(), None).await;
     obs::obs_state(serde_json::json!({ "cover": "https://evil.com/x" }));
     let _ = discord::discord_status();
 }

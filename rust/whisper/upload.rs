@@ -134,9 +134,13 @@ impl Multipart {
 }
 
 async fn post_multipart(path: &str, token: &str, form: Multipart) -> Result<WaResponse, String> {
+    send_multipart(reqwest::Method::POST, path, token, form).await
+}
+
+async fn send_multipart(method: reqwest::Method, path: &str, token: &str, form: Multipart) -> Result<WaResponse, String> {
     let (ctype, body) = form.finish();
     let resp = media_client()
-        .post(api_url(path)?)
+        .request(method, api_url(path)?)
         .header("Authorization", format!("Bearer {token}"))
         .header("Accept", "application/json")
         .header("Content-Type", ctype)
@@ -255,6 +259,15 @@ impl Upload {
         let mut form = Multipart::new();
         form.file("tracks", &track.name, track.mime, track.bytes);
         post_multipart(&format!("/api/albums/{album_id}/tracks"), &self.token, form).await
+    }
+
+    /// Синхронизация библиотеки: файл своего трека (PUT /api/library/{service}/{key}/file, library.rs).
+    /// Запись с этим key должна уже быть на сервере (wa_lib_changes), иначе 404.
+    pub async fn to_library(self, service: &str, key: &str, track: TrackFile<'_>) -> Result<WaResponse, String> {
+        let path = super::library::file_path(service, key)?;
+        let mut form = Multipart::new();
+        form.file("file", &track.name, track.mime, track.bytes);
+        send_multipart(reqwest::Method::PUT, &path, &self.token, form).await
     }
 
     /// «Слушать вместе»: файл трека во временный кэш комнаты (POST /api/rooms/{code}/cache), в архив он не сохраняется.

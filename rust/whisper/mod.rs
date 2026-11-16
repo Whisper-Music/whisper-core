@@ -13,7 +13,9 @@
 //  * auth.rs   — вход по почте (код из письма → ключ);
 //  * upload.rs — загрузка трека в архив: multipart, бюджет загрузок, проверка форматов (без скачивания из сервиса);
 //  * stream.rs — потоковое воспроизведение wa://, заранее взятые начала треков;
-//  * rooms.rs  — «Слушать вместе»: комнаты на сервере архива.
+//  * rooms.rs  — «Слушать вместе»: комнаты на сервере архива;
+//  * library.rs — синхронизация библиотеки: свои треки и их место в «Лайках» на всех устройствах (/api/library);
+//  * friends.rs — друзья: список, заявки, поиск людей, публичные профили и картинки архива байтами (/api/friends).
 //
 // Безопасность:
 //  * API-ключ wa_… хранится в системном хранилище (whisper_host → хранилище приложения) и в JavaScript не отдаётся:
@@ -24,8 +26,10 @@
 //  * ключ отправляется в заголовке Authorization: Bearer wa_…, как описано в схеме API.
 
 pub mod auth;
+pub mod friends;
 // то, что даёт приложение: ключ, heavy_slot, app_origin, DEVICE_NAME (rust/whisper_host.example.rs)
 use crate::whisper_host as host;
+pub mod library;
 pub mod rooms;
 pub mod stream;
 pub mod upload;
