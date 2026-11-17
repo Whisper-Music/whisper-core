@@ -1,0 +1,28 @@
+/* core/profile.js — свой профиль Whisper Archive. Остальное (аватары, альбомы, строки друзей) — классы core/friends.css */
+.wpro-head { display: flex; gap: 20px; align-items: flex-start; margin: 4px 0 18px; }
+.wpro-head .frav.big.wpro-av { width: 112px; height: 112px; font-size: 42px; flex: none; cursor: pointer; transition: box-shadow .15s, transform .15s; }
+.wpro-head .wpro-av:hover, .wpro-head .wpro-av:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 60%, transparent); }
+.wpro-tx { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1; }
+.wpro-name { margin: 2px 0 0; font-size: 26px; line-height: 1.15; overflow-wrap: anywhere; }
+.wpro-sub { color: var(--muted); font-size: 13px; }
+.wpro-store { height: 6px; max-width: 320px; border-radius: 99px; background: rgba(255,255,255,.1); overflow: hidden; margin-top: 4px; }
+.wpro-store i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.wpro-nick { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.wpro-nick .field { flex: 1; min-width: 180px; max-width: 320px; margin: 0; }
+.wpro-acts { flex-wrap: wrap; margin-top: 6px; }
+.wpro-tabs { margin: 0 0 12px; }
+.wpro-req { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; margin-bottom: 10px;
+  border-radius: 12px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+@media (max-width: 640px) { .wpro-head { flex-direction: column; align-items: center; text-align: center; } .wpro-acts { justify-content: center; } }
+
+/* выбор профиля (кнопка «Профиль» приложения): два больших варианта */
+.prochoose { width: min(440px, calc(100vw - 40px)); }
+.prochoose .addopts { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 14px; }
+.prochoose .addopt { display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 14px; border-radius: 14px; text-align: left;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); color: var(--text); transition: background .15s, border-color .15s; }
+.prochoose .addopt:hover, .prochoose .addopt:focus-visible { background: rgba(255,255,255,.12); border-color: color-mix(in srgb, var(--accent) 55%, transparent); outline: none; }
+.prochoose .addico { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 700; font-size: 18px; }
+.prochoose .addopt b { display: block; font-weight: 600; }
+.prochoose .addopt small { display: block; margin-top: 2px; color: var(--muted); font-size: 12.5px; }
+.prochoose .row { justify-content: space-between; }

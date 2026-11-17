@@ -15,7 +15,8 @@
 //  * stream.rs — потоковое воспроизведение wa://, заранее взятые начала треков;
 //  * rooms.rs  — «Слушать вместе»: комнаты на сервере архива;
 //  * library.rs — синхронизация библиотеки: свои треки и их место в «Лайках» на всех устройствах (/api/library);
-//  * friends.rs — друзья: список, заявки, поиск людей, публичные профили и картинки архива байтами (/api/friends).
+//  * friends.rs — друзья: список, заявки, поиск людей, публичные профили и картинки архива байтами (/api/friends);
+//  * profile.rs — свой профиль из приложения: посмотреть, сменить никнейм и аватар (/api/app/me; устройства — только на сайте).
 //
 // Безопасность:
 //  * API-ключ wa_… хранится в системном хранилище (whisper_host → хранилище приложения) и в JavaScript не отдаётся:
@@ -30,6 +31,7 @@ pub mod friends;
 // то, что даёт приложение: ключ, heavy_slot, app_origin, DEVICE_NAME (rust/whisper_host.example.rs)
 use crate::whisper_host as host;
 pub mod library;
+pub mod profile;
 pub mod rooms;
 pub mod stream;
 pub mod upload;

@@ -92,13 +92,13 @@ fn pct_encode(s: &str) -> String {
 }
 
 /// Простой multipart/form-data без внешних зависимостей.
-struct Multipart {
+pub(super) struct Multipart {
     boundary: String,
     body: Vec<u8>,
 }
 
 impl Multipart {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self { boundary: random_boundary(), body: Vec::new() }
     }
 
@@ -112,7 +112,7 @@ impl Multipart {
         );
     }
 
-    fn file(&mut self, name: &str, filename: &str, content_type: &str, data: &[u8]) {
+    pub(super) fn file(&mut self, name: &str, filename: &str, content_type: &str, data: &[u8]) {
         // в кавычках — само имя (так шлют браузеры), в filename* — то же имя по RFC 5987
         let quoted: String = filename.chars().filter(|c| *c != '"' && *c != '\\' && !c.is_control()).collect();
         self.body.extend_from_slice(
@@ -137,7 +137,7 @@ async fn post_multipart(path: &str, token: &str, form: Multipart) -> Result<WaRe
     send_multipart(reqwest::Method::POST, path, token, form).await
 }
 
-async fn send_multipart(method: reqwest::Method, path: &str, token: &str, form: Multipart) -> Result<WaResponse, String> {
+pub(super) async fn send_multipart(method: reqwest::Method, path: &str, token: &str, form: Multipart) -> Result<WaResponse, String> {
     let (ctype, body) = form.finish();
     let resp = media_client()
         .request(method, api_url(path)?)
