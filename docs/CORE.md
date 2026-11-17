@@ -447,8 +447,8 @@ Whisper.ui.define({
 своим id, друзья — `wa_friends_list`.
 
 Что нужно от приложения: раздел `#waprofilePage.kitpage`, `kit.page("waprofile", { btn, bind: false })` и кнопка, которая
-вызывает `Whisper.modules.waprofile.open()` (имя кнопки — `kit.profileButton`; в Whisper Yandex «Профиль» сначала
-спрашивает: Whisper Archive или Яндекс).
+вызывает `Whisper.modules.waprofile.open()` (id кнопки отдаёт функция `kit.profileButton()` — набор интерфейса
+пропускает к модулям только функции; в Whisper Yandex «Профиль» сначала спрашивает: Whisper Archive или Яндекс).
 
 ### `core/queue.js` + `core/queue.css` — очередь и история прослушивания
 

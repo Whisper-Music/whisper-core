@@ -298,7 +298,7 @@
 
   page = kit.page?.("waprofile", {
     title: "Профиль Whisper Archive",
-    btn: kit.profileButton || undefined,
+    btn: kit.profileButton?.() || undefined,      // кнопка, которая открывает профиль (функция: kit отдаёт только функции)
     bind: false,
     render: () => { paint(); load().then(paint); },
   }) || null;
