@@ -577,7 +577,8 @@
 
   async function create() {
     try { start(await req("POST", "/api/rooms")); showToast(`Комната ${code} создана — отправь код друзьям`, 4000, { kind: "ok" }); }
-    catch (e) { setStatus(e.message); }
+    // окна комнаты может не быть (позвали друга из «Друзей») — тогда ошибка видна подсказкой, а не пропадает молча
+    catch (e) { setStatus(e.message); if (!panel) showToast("Комната не создалась: " + e.message, 5000, { kind: "err" }); }
   }
   async function join(c) {
     const norm = String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -729,8 +730,10 @@
     if (hasKey) loadFriends(true);
   }, 2500);
   // для вкладки «Друзья» (core/friends.js): позвать друга (без комнаты — она создаётся), его статус в комнате,
-  // обновить список «кого звать» (добавили или убрали друга — заодно начать ждать приглашений)
-  W.modules.together = {
+  // обновить список «кого звать» (добавили или убрали друга — заодно начать ждать приглашений).
+  // Это часть ОДНОГО Whisper.modules.together — его собирают в конце файла вместе с остальным (api). Раньше здесь
+  // был свой объект, и его затирал общий: у «Друзей» пропадали «Позвать» и статусы, слушать с другом не получалось.
+  const friendsApi = {
     invite: (f) => inviteFriend({ id: String(f?.id || ""), nickname: String(f?.nickname || "Друг") }),
     inRoom: () => inRoom(),
     status: (id) => friendStatus({ id }),
@@ -1516,7 +1519,8 @@
     },
     stBtn: () => { if (!inRoom() || isHost()) return; if (!follow) rejoin(); else if (!panel) open(); },
   };
-  W.modules.together = api;
+  // один модуль на всё «Слушать вместе»: комната, плеер, консоль и «Друзья» (friendsApi: invite, inRoom, status, refresh)
+  W.modules.together = Object.assign(api, friendsApi);
   // старые имена: main.js (страница «Моя волна», nextIndex, play) и консоль (cli.js)
   window.roomInfo = info;
   window.roomWantsPlay = wantsPlay;
