@@ -63,6 +63,10 @@ fn build_client(total_secs: u64) -> Client {
     Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(total_secs))
+        // После смены сети (включили/выключили VPN, Wi-Fi → мобильный интернет) старые соединения из пула мертвы,
+        // но об этом не знают: запрос по такому ждёт до таймаута, и гость за это время выпадает из комнаты.
+        // Неиспользуемые соединения дольше 20 с не храним — следующий запрос откроет новое по текущей сети.
+        .pool_idle_timeout(Duration::from_secs(20))
         .redirect(redirect::Policy::custom(|attempt| {
             if attempt.previous().len() >= 5 {
                 return attempt.error("слишком много перенаправлений");

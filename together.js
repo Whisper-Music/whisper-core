@@ -422,18 +422,48 @@
       try {
         const snap = await req("GET", `/api/rooms/${code}`, null, room.version);
         if (gen !== pollGen) return;
-        fails = 0;
+        fails = 0; netBad = false;
         // сервер ставит serverNow в момент ответа (а не начала ожидания) — сравниваем с моментом получения
         offset = snap.serverNow - Date.now();
         accept(snap);
       } catch (e) {
         if (gen !== pollGen) return;
-        if (e.status === 404 || e.status === 403) return gone(e.status === 404 ? "Комната закрыта" : e.message);
+        if (e.status === 404) return gone("Комната закрыта");
+        // 403 — сервер уже убрал нас из комнаты: пока не было связи (сменилась сеть, включили или выключили VPN),
+        // он перестал нас видеть (гость — через 75 с, ведущий — через 120 с). Комната ещё жива — входим заново тем же
+        // кодом, а не выходим насовсем. Не пускает и сейчас — тогда уже выходим.
+        if (e.status === 403) {
+          try {
+            const snap = await req("POST", `/api/rooms/${code}/join`);
+            if (gen !== pollGen) return;
+            fails = 0;
+            offset = (snap.serverNow || Date.now()) - Date.now();
+            accept(snap);
+            continue;
+          } catch (e2) {
+            if (gen !== pollGen) return;
+            if (e2.status === 404 || e2.status === 403) return gone(e2.status === 404 ? "Комната закрыта" : e2.message || e.message);
+          }
+        }
+        netBad = true;
         if (++fails >= 2) setStatus("Нет связи с сервером, идёт переподключение…");
-        await new Promise((r) => setTimeout(r, Math.min(15000, 1500 * fails)));
+        await waitOrWake(Math.min(15000, 1500 * fails));
       }
     }
   }
+  // Пауза перед повтором, которую можно прервать: сеть вернулась (online) или окно снова на экране — переподключаемся
+  // сразу, а не ждём до 15 с. Опрос висит на запросе — запускаем новый: прежний мог застрять на старой сети до таймаута.
+  let wake = null, netBad = false;
+  const waitOrWake = (ms) => new Promise((r) => { const t = setTimeout(done, ms); function done() { clearTimeout(t); if (wake === done) wake = null; r(); } wake = done; });
+  function reconnect() {
+    if (!inRoom()) return;
+    if (wake) return wake();                  // опрос ждёт повтора — пусть повторит сейчас
+    const gen = ++pollGen;                    // опрос висит на запросе — начинаем новый, старый ответ отбросится
+    pollLoop(gen);
+    if (isHost()) hostPush(true);
+  }
+  window.addEventListener("online", reconnect);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && netBad) reconnect(); });
   function accept(snap) {
     const prevPb = JSON.stringify(room?.playback || null);
     const wasHost = room ? !!room.isHost : null;
