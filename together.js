@@ -67,10 +67,29 @@
     let data = null;
     try { data = r.body ? JSON.parse(r.body) : null; } catch {}
     if (r.status >= 200 && r.status < 300) return data;
-    const e = new Error(data?.message || `Сервер ответил HTTP ${r.status}`);
-    e.status = r.status;
-    throw e;
+    throw httpErr(r.status, data);
   }
+  // ошибка сервера: status — HTTP, type — вид отказа (banned — ведущий убрал, locked — вход закрыт, …)
+  function httpErr(status, data) {
+    const e = new Error(data?.message || HTTP_TEXT[status] || `Сервер ответил HTTP ${status}`);
+    e.status = status;
+    e.type = String(data?.type || "");
+    return e;
+  }
+  const HTTP_TEXT = {
+    429: "Слишком часто — подожди минуту и попробуй снова",
+    507: "На сервере архива кончилось место для временных файлов комнат — попробуй позже",
+  };
+  const BANNED_MSG = "Ведущий убрал тебя из комнаты";
+  const LOCKED_MSG = "Ведущий закрыл вход в комнату — попроси его позвать тебя";
+  // код комнаты из того, что ввели или вставили: «k7qh2-mxp4r», «K7QH2 MXP4R» или ссылка …/join/K7QH2MXP4R
+  const normCode = (s) => {
+    const raw = String(s || "").trim();
+    const link = /(?:\/join\/|room\/)([A-Za-z0-9-]{4,16})\/?(?:[?#].*)?$/.exec(raw);
+    return (link ? link[1] : raw).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  };
+  // код читается легче парами по 5: K7QH2 MXP4R (копируется и вставляется — без пробела)
+  const prettyCode = (c) => (c.length === 10 ? `${c.slice(0, 5)} ${c.slice(5)}` : c);
 
   // ---------- трек ↔ формат сервера ----------
   // Как трек сервиса записать для сервера комнат и обратно — знает провайдер (toRoom / fromRoom). Нет — общие поля.
@@ -428,11 +447,13 @@
         accept(snap);
       } catch (e) {
         if (gen !== pollGen) return;
-        if (e.status === 404) return gone("Комната закрыта");
-        // 403 — сервер уже убрал нас из комнаты: пока не было связи (сменилась сеть, включили или выключили VPN),
-        // он перестал нас видеть (гость — через 75 с, ведущий — через 120 с). Комната ещё жива — входим заново тем же
-        // кодом, а не выходим насовсем. Не пускает и сейчас — тогда уже выходим.
-        if (e.status === 403) {
+        // ведущий убрал нас из комнаты (или заблокировал в друзьях) — обратно не войти, выходим из режима комнаты
+        if (e.status === 403 && e.type === "banned") return gone(BANNED_MSG);
+        // 404 — комнаты нет ИЛИ мы в ней больше не участник: пока не было связи (сменилась сеть, VPN), сервер перестал
+        // нас видеть (гость — через 75 с, ведущий — через 120 с). Чтобы по ответу нельзя было угадать коды, сервер
+        // отвечает на оба случая одинаково — проверяем входом тем же кодом: комната жива — мы снова в ней.
+        // (403 без type — старый сервер так отвечал «не участник».)
+        if (e.status === 404 || e.status === 403) {
           try {
             const snap = await req("POST", `/api/rooms/${code}/join`);
             if (gen !== pollGen) return;
@@ -442,7 +463,9 @@
             continue;
           } catch (e2) {
             if (gen !== pollGen) return;
-            if (e2.status === 404 || e2.status === 403) return gone(e2.status === 404 ? "Комната закрыта" : e2.message || e.message);
+            if (e2.status === 404) return gone("Комната закрыта");
+            if (e2.status === 403) return gone(e2.type === "banned" ? BANNED_MSG : e2.type === "locked" ? "Пока не было связи, ведущий закрыл вход в комнату" : e2.message || e.message);
+            // 429 (входили слишком часто) и сбои сети — ждём и пробуем снова
           }
         }
         netBad = true;
@@ -474,11 +497,20 @@
     if (!isHost() && JSON.stringify(snap.playback || null) !== prevPb) guestApply();
     if (isHost()) { onSuggestions(); onMissingHost(); }
     onThemes(); onWinks();
-    // в комнате кто-то новый — он теперь в друзьях (сервер записал при его входе)
-    if ((snap.members || []).some((m) => !m.isMe && memberId(m) != null && !friends.some((f) => String(f.id) === String(memberId(m))))) {
-      setTimeout(() => loadFriends(), 1500);
-    }
+    metLater(snap.members);
     paint();
+  }
+  // «Слушали вместе» сервер записывает не при входе, а когда двое пробыли в комнате 2 минуты — список «кого звать»
+  // перечитываем чуть позже этого момента (по одному разу на нового человека)
+  const MEET_AFTER = 2 * 60e3 + 5000;
+  const metWait = new Set();
+  function metLater(members) {
+    for (const m of members || []) {
+      const id = String(memberId(m) ?? "");
+      if (m.isMe || !id || metWait.has(id) || friends.some((f) => String(f.id) === id)) continue;
+      metWait.add(id);
+      setTimeout(() => { if (inRoom() && (room.members || []).some((x) => String(memberId(x) ?? "") === id)) loadFriends(true); }, MEET_AFTER);
+    }
   }
 
   // ---------- передача ведущего ----------
@@ -514,6 +546,45 @@
       setStatus(e.status === 404 || e.status === 405 ? "Сервер комнат пока не умеет передавать ведущего" : e.message);
       paint();
     }
+  }
+
+  // ---------- ведущий: убрать участника и закрыть вход ----------
+  // Убранный (POST …/kick) больше не войдёт, пока ведущий его не вернёт (DELETE …/bans/{userId}); сервер заодно
+  // убирает его предложения, темы и приглашения. Закрытый вход (POST …/lock) — по коду не войти, только по приглашению
+  // ведущего. Кого ты заблокировал в друзьях, сервер в твою комнату не пускает сам (403 banned).
+  let kickFor = null;             // кого ведущий собирается убрать (подтверждение под строкой участника)
+  let lockBusy = false;
+  const bannedList = () => (isHost() && Array.isArray(room?.banned) ? room.banned : []).filter((b) => UUID.test(String(b?.userId || "")));
+  function hostSnap(snap) { if (snap?.code) { if (snap.serverNow) offset = snap.serverNow - Date.now(); accept(snap); } }
+  async function kick(m) {
+    const id = String(memberId(m) ?? "");
+    if (!inRoom() || !isHost() || !UUID.test(id)) return;
+    kickFor = null;
+    try {
+      hostSnap(await cmd("wa_room_kick", { code, memberId: id }));
+      showToast(`${m.nickname || "Участник"} убран из комнаты и не сможет войти снова`, 4000, { kind: "ok", action: { label: "Вернуть", fn: () => unban({ userId: id, nickname: m.nickname }) } });
+    } catch (e) {
+      showToast(e.status === 404 || e.status === 405 ? "Сервер комнат пока не умеет убирать участников" : "Не удалось убрать: " + e.message, 5000, { kind: "err" });
+    }
+    paint();
+  }
+  async function unban(b) {
+    if (!inRoom() || !isHost()) return;
+    try {
+      hostSnap(await cmd("wa_room_unban", { code, userId: String(b.userId) }));
+      showToast(`${b.nickname || "Участник"} снова может войти в комнату`, 3500, { kind: "ok" });
+    } catch (e) { showToast("Не удалось вернуть: " + e.message, 5000, { kind: "err" }); }
+    paint();
+  }
+  async function setLocked(on) {
+    if (!inRoom() || !isHost() || lockBusy) return;
+    lockBusy = true; paint();
+    try {
+      hostSnap(await cmd("wa_room_lock", { code, locked: !!on }));
+      showToast(on ? "Вход закрыт — войдут только те, кого ты позовёшь" : "Вход открыт — по коду и ссылке снова можно войти", 3500, { kind: "ok" });
+    } catch (e) {
+      showToast(e.status === 404 || e.status === 405 ? "Сервер комнат пока не умеет закрывать вход" : "Не получилось: " + e.message, 5000, { kind: "err" });
+    } finally { lockBusy = false; paint(); }
   }
 
   // ---------- ведущий: новые предложения ----------
@@ -586,7 +657,7 @@
     if (isHost()) hostPush(true); else guestApply();
     paint();
     setTimeout(() => { if (gen === pollGen) checkPing(false); }, 2000);   // свой пинг — серверу сразу, остальным видно
-    setTimeout(() => loadFriends(true), 2500);                            // вошёл к людям — они теперь в друзьях
+    metLater(snap.members);                                               // через 2 минуты вместе они — в «слушали вместе»
     inboxKick();
   }
   function gone(msg) {
@@ -596,6 +667,7 @@
     guestFor = null; missingNote = ""; shareAsked = ""; roomShared.clear();
     invited.clear(); themesSeen.clear(); themesInstalled.clear(); themesPrimed = false;   // «Позван» и темы — только про ту комнату
     winksSeen.clear(); winksPrimed = false; winkFor = null;
+    metWait.clear(); kickFor = null; lockBusy = false;
     myPing = 0; pingSrv = null; pingErr = ""; loadChecked = "";
     unkeep();
     document.body.classList.remove("in-room", "room-guest");
@@ -611,10 +683,19 @@
     catch (e) { setStatus(e.message); if (!panel) showToast("Комната не создалась: " + e.message, 5000, { kind: "err" }); }
   }
   async function join(c) {
-    const norm = String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (norm.length < 4) return setStatus("Введи код комнаты");
-    try { start(await req("POST", `/api/rooms/${norm}/join`)); showToast(`Ты в комнате ${norm}`, 3000, { kind: "ok" }); }
-    catch (e) { setStatus(e.message); if (!panel) showToast(e.message, 5000); }
+    const norm = normCode(c);
+    if (!norm) return setStatus("Введи код комнаты");
+    // коды теперь из 10 знаков; 4–12 — на случай старого сервера с короткими кодами
+    if (norm.length < 4 || norm.length > 12) return setStatus("Код комнаты — 10 букв и цифр, например K7QH2 MXP4R");
+    try { start(await req("POST", `/api/rooms/${norm}/join`)); showToast(`Ты в комнате ${prettyCode(norm)}`, 3000, { kind: "ok" }); }
+    catch (e) {
+      const m = e.status === 403 && e.type === "banned" ? "Ведущий убрал тебя из этой комнаты — войти снова нельзя"
+        : e.status === 403 && e.type === "locked" ? LOCKED_MSG
+        : e.status === 429 ? "Слишком много попыток входа — подожди минуту"
+        : e.status === 404 ? "Комнаты с таким кодом нет или она уже закрыта — проверь код"
+        : e.message;
+      setStatus(m); if (!panel) showToast(m, 5000);
+    }
   }
 
   // ---------- приглашение по ссылке ----------
@@ -634,7 +715,7 @@
     if (c) offerJoin(c);
   }
   async function offerJoin(raw) {
-    const c = String(raw || "").toUpperCase();
+    const c = normCode(raw);
     if (!/^[A-Z0-9]{4,12}$/.test(c) || offering) return;
     if (inRoom() && code === c) { showToast(`Ты уже в комнате ${c}`, 3000, { kind: "ok" }); if (!panel) open(); return; }
     offering = true;
@@ -670,9 +751,7 @@
     let data = null;
     try { data = r.body ? JSON.parse(r.body) : null; } catch {}
     if (r.status >= 200 && r.status < 300) return data;
-    const e = new Error(data?.message || `Сервер ответил HTTP ${r.status}`);
-    e.status = r.status;
-    throw e;
+    throw httpErr(r.status, data);
   }
   let friends = [], friendsAt = 0, friendsBusy = false, invites = [];
   const invited = new Map();          // id друга → когда позвали (подпись «Позван» на 10 минут)
@@ -695,8 +774,14 @@
     try {
       const r = await cmd("wa_room_invite", { code, userId: String(f.id) });
       invited.set(String(f.id), Date.now());
-      showToast(r?.online ? `${f.nickname} получит приглашение` : `Приглашение отправлено — ${f.nickname} увидит его, когда откроет приложение`, 4000, { kind: "ok" });
-    } catch (e) { showToast("Не удалось позвать: " + e.message, 5000, { kind: "err" }); }
+      // online / presence сервер сообщает только про друзей; у «слушали вместе» без дружбы — null
+      showToast(r?.online ? `${f.nickname} получит приглашение`
+        : r?.online == null ? `Приглашение для ${f.nickname} отправлено`
+        : `Приглашение отправлено — ${f.nickname} увидит его, когда откроет приложение`, 4000, { kind: "ok" });
+    } catch (e) {
+      const m = e.status === 403 && inRoom() && room.locked && !isHost() ? "Вход в комнату закрыт — звать может только ведущий" : e.message;
+      showToast("Не удалось позвать: " + m, 5000, { kind: "err" });
+    }
     if (panel) paint();
   }
   async function forgetFriend(f) {
@@ -715,7 +800,7 @@
     while (gen === inboxGen) {
       const t0 = Date.now();
       try {
-        const v = await cmd("wa_room_invites", { since, app: /^[a-z0-9-]{1,20}$/.test(myProv()) ? myProv() : null });
+        const v = await cmd("wa_room_invites", { since, app: /^[a-z0-9-]{1,20}$/.test(myProv()) ? myProv() : null, presence });
         if (gen !== inboxGen) return;
         fails = 0;
         const ver = +v?.version || 0;
@@ -753,11 +838,52 @@
     if (panel) paint();
     try { await cmd("wa_room_invite_dismiss", { id: String(inv.id) }); } catch {}
   }
-  // при запуске: есть вход в архив — узнать друзей (и, если они есть, ждать приглашений)
+  // ---------- мой статус для друзей: «в сети» (зелёный) / «отошёл» (оранжевый) ----------
+  // Отошёл — 10 минут без мыши и клавиатуры. Время простоя даёт приложение (kit.idleMs — системное: ввод в других окнах
+  // тоже считается, музыку ведь слушают, работая в другом). Не даёт (Linux, телефон) — судим по своему окну: давно
+  // спрятано или давно без ввода, пока оно в фокусе. Статус уходит сразу (wa_room_presence) и с каждым ожиданием
+  // приглашений; оно само «отошёл» не сбрасывает — вернулся, шлём online. «Не в сети» при выходе шлёт Rust (lib.rs, Exit).
+  const AWAY_MS = 10 * 60e3;
+  let presence = "online", presenceSent = "", presenceAt = 0, presenceOff = false, presenceBusy = false;
+  let lastInput = Date.now(), hiddenSince = document.hidden ? Date.now() : 0, inputPoke = 0;
+  async function idleNow() {
+    let ms = null;
+    try { ms = await kit.idleMs?.(); } catch {}
+    if (Number.isFinite(ms) && ms >= 0) return ms;
+    if (document.hidden) return Date.now() - hiddenSince;
+    return document.hasFocus() ? Date.now() - lastInput : 0;      // окно видно, но работаешь в другом — не «отошёл»
+  }
+  async function checkPresence() {
+    if (presenceBusy) return;
+    presenceBusy = true;
+    try {
+      presence = (await idleNow()) >= AWAY_MS ? "away" : "online";
+      if (presenceOff) return;
+      // тот же статус — не шлём; но сервер через 70 с тишины ставит «не в сети», а ожидание приглашений (оно и
+      // подтверждает «я тут») крутится, только если есть друзья, — без него напоминаем сами раз в минуту
+      if (presenceSent === presence && (inboxOn || Date.now() - presenceAt < 55000)) return;
+      let hasKey = false;
+      try { hasKey = await invoke("wa_token_exists"); } catch {}
+      if (!hasKey) return;
+      const want = presence;
+      try { await cmd("wa_room_presence", { status: want }); presenceSent = want; presenceAt = Date.now(); }
+      catch (e) { if ([404, 405].includes(e.status)) presenceOff = true; }   // старый сервер без статусов — не дёргаем
+    } finally { presenceBusy = false; }
+  }
+  // вернулся к окну — «в сети» сразу, а не через полминуты (не чаще раза в 2 с: pointermove сыплется часто)
+  const onInput = () => {
+    lastInput = Date.now();
+    if (presence === "away" && lastInput - inputPoke > 2000) { inputPoke = lastInput; checkPresence(); }
+  };
+  for (const ev of ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]) window.addEventListener(ev, onInput, { capture: true, passive: true });
+  document.addEventListener("visibilitychange", () => { hiddenSince = document.hidden ? Date.now() : 0; if (!document.hidden) onInput(); });
+  setInterval(checkPresence, 20000);
+
+  // при запуске: есть вход в архив — узнать друзей (и, если они есть, ждать приглашений), сказать «в сети»
   setTimeout(async () => {
     let hasKey = false;
     try { hasKey = await invoke("wa_token_exists"); } catch {}
-    if (hasKey) loadFriends(true);
+    if (hasKey) { loadFriends(true); checkPresence(); }
   }, 2500);
   // для вкладки «Друзья» (core/friends.js): позвать друга (без комнаты — она создаётся), его статус в комнате,
   // обновить список «кого звать» (добавили или убрали друга — заодно начать ждать приглашений).
@@ -875,7 +1001,8 @@
     try {
       const r = await invoke("wa_room_ping", { code: c, report: pingSrv !== false });
       if (c !== code) return;
-      if (r.status === 404) return gone("Комната закрыта");
+      // 404 / 403: комнаты нет, нас потеряли по тишине или убрали — разбирается опрос (pollLoop), он и выйдет или войдёт снова
+      if (r.status === 404 || r.status === 403) { reconnect(); return; }
       if (r.ms > 0) myPing = r.ms;
       const rp = r.report;
       if (rp) {
@@ -1040,8 +1167,9 @@
     const mk = el("button", "nav active rmcreate", "Создать комнату");
     mk.type = "button"; mk.disabled = !hasKey; mk.onclick = create;
     const row = el("form", "rmjoin");
-    const inp = el("input", "field rmcode"); inp.placeholder = "Код комнаты"; inp.maxLength = 12; inp.autocomplete = "off"; inp.spellcheck = false;
-    inp.oninput = () => { inp.value = inp.value.toUpperCase().replace(/[^A-Z0-9]/g, ""); };
+    // код — 10 знаков; можно вставить и с дефисом, и всю ссылку-приглашение — останется только код
+    const inp = el("input", "field rmcode"); inp.placeholder = "Код комнаты, например K7QH2MXP4R"; inp.maxLength = 200; inp.autocomplete = "off"; inp.spellcheck = false;
+    inp.oninput = () => { const v = normCode(inp.value).slice(0, 12); if (inp.value !== v) inp.value = v; };
     const go = el("button", "nav", "Войти"); go.type = "submit"; go.disabled = !hasKey;
     row.onsubmit = (e) => { e.preventDefault(); join(inp.value); };
     row.append(inp, go);
@@ -1076,20 +1204,26 @@
   function friendsBlock(box) {
     if (!friends.length) return;
     const sec = el("div", "rmfriends");
-    sec.append(el("small", "", inRoom() ? "Позвать друзей" : "Друзья и те, с кем ты уже слушал вместе"));
+    // в закрытую комнату звать может только ведущий (гостю сервер ответит 403)
+    const noInvite = inRoom() && !!room.locked && !isHost();
+    sec.append(el("small", "", noInvite ? "Вход закрыт — звать друзей может только ведущий" : inRoom() ? "Позвать друзей" : "Друзья и те, с кем ты уже слушал вместе"));
     const ul = el("div", "rmflist");
-    const rank = (f) => (friendStatus(f) === "here" ? 2 : f.online ? 0 : 1);       // в сети — сверху, уже в комнате — внизу
+    // в сети — сверху, отошёл — следом, уже в комнате — внизу
+    const rank = (f) => (friendStatus(f) === "here" ? 3 : f.presence === "away" ? 1 : f.online ? 0 : 2);
     for (const f of [...friends].sort((a, b) => rank(a) - rank(b))) {
       const st = friendStatus(f);
       const row = el("div", "rmfriend" + (st ? " st-" + st : ""));
-      const dot = el("i", "rmfdot" + (f.online || st === "here" ? " on" : ""));
-      dot.title = st === "here" ? "В комнате" : f.online ? "Приложение открыто" : "Не в сети";
+      // presence: online | away («отошёл» — оранжевая) | offline; есть только у друзей, у «слушали вместе» — null
+      const away = st !== "here" && f.presence === "away";
+      const dot = el("i", "rmfdot" + (away ? " away" : f.online || st === "here" ? " on" : ""));
+      dot.title = st === "here" ? "В комнате" : away ? "Отошёл" : f.online ? "Приложение открыто" : "Не в сети";
       const name = el("span", "rmfname", f.nickname);
       const n = f.metCount || 0, few = n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 > 20);
       name.title = n ? `Слушали вместе: ${n} ${few ? "раза" : "раз"}` : "Друг";
       row.append(dot, name);
       if (f.app) { const a = el("span", "rmfapp", appLabel(f.app)); a.title = "Слушает через Whisper " + appLabel(f.app); row.append(a); }
       if (st === "here") row.append(el("span", "rmfstate", STATUS.here[0]));
+      else if (noInvite) { if (st && STATUS[st]) row.append(el("span", "rmfstate", STATUS[st][0])); }
       else {
         const [label, tip] = STATUS[st] || ["Позвать", inRoom() ? "Друг получит уведомление в приложении" : "Создать комнату и позвать"];
         const b = el("button", "nav" + (st === "pending" ? "" : " active"), label);
@@ -1230,15 +1364,24 @@
     box.append(h);
     // код
     const c = el("div", "rmcodebox");
-    const big = el("b", "rmbig", code);
+    const big = el("b", "rmbig", prettyCode(code));
     const cp = el("button", "nav", "Копировать код"); cp.type = "button";
     cp.onclick = async () => { try { await navigator.clipboard.writeText(code); showToast("Код скопирован", 2000, { kind: "ok" }); } catch {} };
     const lk = el("button", "nav active", "Ссылка-приглашение"); lk.type = "button";
     lk.title = inviteUrl() + " — друг откроет её, и приложение предложит войти в комнату";
     lk.onclick = copyInvite;
     const btns = el("div", "rmcodebtns"); btns.append(lk, cp);
-    c.append(el("span", "", "Код комнаты"), big, btns);
+    c.append(el("span", "", room.locked ? "Код комнаты · 🔒 вход закрыт" : "Код комнаты"), big, btns);
     box.append(c);
+    // ведущий: закрыть вход — по коду и ссылке больше не войти, только по твоему приглашению
+    if (isHost()) {
+      const ll = el("label", "switch rmauto rmlock");
+      ll.title = "Уже вошедшие остаются. Новые войдут, только если ты позовёшь их сам (приглашение живёт 10 минут)";
+      const cl = el("input"); cl.type = "checkbox"; cl.checked = !!room.locked; cl.disabled = lockBusy;
+      cl.onchange = () => setLocked(cl.checked);
+      ll.append(cl, el("i"), el("span", "", "Закрыть вход — только по приглашению"));
+      box.append(ll);
+    }
     friendsBlock(box);
     // пинг: свой + кнопка проверки (пинг каждого — в списке участников слева)
     const pr = el("div", "rmpingrow");
@@ -1340,7 +1483,7 @@
     row.dataset.key = memberKey(m);
     if (canPick) {
       row.setAttribute("role", "button"); row.tabIndex = 0; row.title = "Сделать ведущим";
-      row.onclick = () => { confirmFor = sel ? null : String(id); paint(); };
+      row.onclick = () => { confirmFor = sel ? null : String(id); kickFor = null; paint(); };
       row.onkeydown = (e) => { if (e.target === row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); row.onclick(); } };
     }
     const name = String(m.nickname || "Гость");
@@ -1353,8 +1496,24 @@
     if (pb) row.append(pb);
     const key = String(id ?? "");
     if (!m.isMe && id != null) row.append(winkButton(key, `Подмигнуть: ${name}`));
+    // ведущий: «⛔» — убрать из комнаты и не пускать обратно (с подтверждением под строкой)
+    const canKick = isHost() && !m.isMe && !m.isHost && UUID.test(key);
+    if (canKick) {
+      const k = el("button", "rmkickbtn" + (kickFor === key ? " on" : ""), "⛔"); k.type = "button";
+      k.title = `Убрать ${name} из комнаты`; k.setAttribute("aria-label", k.title);
+      k.onclick = (e) => { e.stopPropagation(); kickFor = kickFor === key ? null : key; confirmFor = null; paint(); };
+      row.append(k);
+    }
     // выбор знака — сразу под строкой участника
-    const picker = !m.isMe && id != null && winkFor === key ? winkPicker(key) : null;
+    let picker = !m.isMe && id != null && winkFor === key ? winkPicker(key) : null;
+    if (canKick && kickFor === key) {
+      const cf = el("div", "rmconfirm rmkick");
+      cf.append(el("span", "", `Убрать ${name}? Пропадут его предложения и темы, а войти снова он не сможет, пока ты его не вернёшь.`));
+      const yes = el("button", "nav danger", "Убрать"); yes.type = "button"; yes.onclick = (e) => { e.stopPropagation(); kick(m); };
+      const no = el("button", "nav", "Отмена"); no.type = "button"; no.onclick = (e) => { e.stopPropagation(); kickFor = null; paint(); };
+      const r2 = el("div", "rmconfirmbtns"); r2.append(no, yes); cf.append(r2);
+      if (picker) { const w = el("div"); w.append(picker, cf); picker = w; } else picker = cf;
+    }
     return { row, picker, target: sel ? m : null };
   }
 
@@ -1380,8 +1539,22 @@
     ul.append(el("small", "rmgroup", rest.length ? `Слушатели · ${rest.length}` : "Слушателей пока нет"));
     for (const m of rest) put(personRow(m));
     if (!rest.length) ul.append(el("p", "rmempty", "Отправь друзьям код или ссылку-приглашение — они появятся здесь."));
+    // ведущий: кого убрал — их можно вернуть
+    const bans = bannedList();
+    if (bans.length) {
+      ul.append(el("small", "rmgroup", `Не пускаются · ${bans.length}`));
+      for (const b of bans) {
+        const row = el("div", "rmperson banned");
+        const nm = String(b.nickname || "Слушатель");
+        const tx = el("span", "rmpname"); tx.append(el("b", "", nm), el("small", "", "убран из комнаты"));
+        const back = el("button", "nav", "Вернуть"); back.type = "button"; back.title = `Снова пускать ${nm} в комнату`;
+        back.onclick = (e) => { e.stopPropagation(); back.disabled = true; unban(b); };
+        row.append(el("span", "rmava", nm.trim().charAt(0).toUpperCase() || "?"), tx, back);
+        ul.append(row);
+      }
+    }
     side.append(ul);
-    if (isHost() && !target && rest.some((m) => !m.isMe && memberId(m) != null)) side.append(el("small", "rmhint", "Нажми на слушателя, чтобы передать ему корону — управление музыкой"));
+    if (isHost() && !target && rest.some((m) => !m.isMe && memberId(m) != null)) side.append(el("small", "rmhint", "Нажми на слушателя, чтобы передать ему корону — управление музыкой. «⛔» — убрать из комнаты"));
     if (!isHost()) side.append(el("small", "rmhint", "Музыкой управляет ведущий с короной. Предложить трек — «⋯» у трека, попросить переключить — «😉»"));
     if (target) {
       const cf = el("div", "rmconfirm");
@@ -1500,10 +1673,16 @@
     let snap = null;
     try { snap = await req("GET", `/api/rooms/${c}`, null, null); }
     catch (e) {
-      if (e.status === 404) { unkeep(); return showToast(`Комната ${c} уже закрыта`, 3500); }
-      // 403 — сервер успел убрать нас из участников: просто входим снова
+      if (e.status === 403 && e.type === "banned") { unkeep(); return showToast(BANNED_MSG, 4000); }
+      // 404 — комнаты нет или сервер успел убрать нас из участников (ответ одинаковый): пробуем войти снова
       try { snap = await req("POST", `/api/rooms/${c}/join`); }
-      catch (e2) { if (e2.status === 404) unkeep(); return showToast(`Не удалось вернуться в комнату ${c}: ${e2.message}`, 5000); }
+      catch (e2) {
+        if (e2.status === 404 || e2.status === 403) unkeep();
+        if (e2.status === 404) return showToast(`Комната ${c} уже закрыта`, 3500);
+        if (e2.type === "banned") return showToast(BANNED_MSG, 4000);
+        if (e2.type === "locked") return showToast(`Пока тебя не было, ведущий закрыл вход в комнату ${c}`, 5000);
+        return showToast(`Не удалось вернуться в комнату ${c}: ${e2.message}`, 5000);
+      }
     }
     if (!snap?.code || snap.closed || inRoom()) return;
     if (!snap.isHost && saved.follow === false) follow = false;

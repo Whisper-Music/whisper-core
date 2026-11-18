@@ -44,6 +44,7 @@
   background: var(--muted); border: 2px solid var(--bg, #111);
 }
 .friends .frdot.on { background: #3ecf6e; }
+.friends .frdot.away { background: #f5a524; }   /* отошёл: приложение открыто, но давно без мыши и клавиатуры */
 
 /* профиль друга */
 .friends .frback { display: flex; }

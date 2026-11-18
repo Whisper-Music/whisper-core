@@ -26,10 +26,18 @@
     let data = null;
     try { data = r.body ? JSON.parse(r.body) : null; } catch {}
     if (r.status >= 200 && r.status < 300) return data;
-    const e = new Error(data?.message || (r.status === 429 ? "слишком часто — подожди немного" : `сервер ответил HTTP ${r.status}`));
+    const type = String(data?.type || "");
+    const e = new Error(FR_ERR[type] || data?.message || (r.status === 429 ? "слишком часто — подожди немного" : `сервер ответил HTTP ${r.status}`));
     e.status = r.status;
+    e.type = type;
     throw e;
   }
+  // отказы сервера друзей — понятными словами (сервер присылает и свой текст, но эти точнее для приложения)
+  const FR_ERR = {
+    declined_recently: "он недавно отклонил твою заявку — позвать снова можно через неделю",
+    you_blocked: "ты его заблокировал — сначала разблокируй",
+    not_allowed: "этот человек не принимает от тебя заявки",
+  };
   const msg = (e) => String(e?.message || e || "ошибка");
 
   // ---------- картинки ----------
@@ -67,7 +75,7 @@
   // ---------- данные ----------
   let page = null;                    // { el, open, shown } от kit.page
   let hasKey = null;
-  let data = { friends: [], incoming: [], outgoing: [] };
+  let data = { friends: [], incoming: [], outgoing: [], blocked: [] };
   let recent = [];                    // «слушали вместе» (core/together.js → /api/rooms/friends), кто ещё не в друзьях
   let loadedAt = 0, loading = null, loadErr = "";
   let found = null, foundQ = "", searching = false;
@@ -81,16 +89,16 @@
     if (!force && Date.now() - loadedAt < 10000) return;
     loading = (async () => {
       try { hasKey = !!(await invoke("wa_token_exists")); } catch { hasKey = false; }
-      if (!hasKey) { data = { friends: [], incoming: [], outgoing: [] }; recent = []; return; }
+      if (!hasKey) { data = { friends: [], incoming: [], outgoing: [], blocked: [] }; recent = []; return; }
       try {
         const v = await cmd("wa_friends_list");
-        data = { friends: users(v?.friends), incoming: users(v?.incoming), outgoing: users(v?.outgoing) };
+        data = { friends: users(v?.friends), incoming: users(v?.incoming), outgoing: users(v?.outgoing), blocked: users(v?.blocked) };
         loadErr = "";
         loadedAt = Date.now();
       } catch (e) { loadErr = e.status === 404 ? "архив пока не умеет друзей — обнови сервер" : msg(e); }
       try {
         const r = await cmd("wa_room_friends");
-        const mine = new Set([...data.friends, ...data.incoming, ...data.outgoing].map((u) => String(u.id)));
+        const mine = new Set([...data.friends, ...data.incoming, ...data.outgoing, ...data.blocked].map((u) => String(u.id)));
         recent = users(r).filter((u) => !u.friend && !mine.has(String(u.id))).slice(0, 30);
       } catch { recent = []; }
       badge();
@@ -121,6 +129,14 @@
       } else if (kind === "accept") {
         await cmd("wa_friend_accept", { id });
         toast(`${u.nickname} теперь в друзьях`, 3000, { kind: "ok" });
+      } else if (kind === "block") {
+        const ok = await kit.confirm?.({ title: `Заблокировать ${u.nickname}?`, text: "Дружба и заявки пропадут. Он не найдёт тебя в поиске, не сможет позвать в друзья или в комнату и не войдёт в твою комнату. Разблокировать можно в любой момент.", ok: "Заблокировать", danger: true });
+        if (!ok) return;
+        await cmd("wa_friend_block", { id });
+        toast(`${u.nickname} заблокирован`, 3000, { kind: "ok" });
+      } else if (kind === "unblock") {
+        await cmd("wa_friend_unblock", { id });
+        toast(`${u.nickname} разблокирован`, 3000, { kind: "ok" });
       } else {
         if (kind === "remove") {
           const ok = await kit.confirm?.({ title: "Убрать из друзей?", text: `${u.nickname} пропадёт из твоих друзей, а ты — из его. Добавить друг друга можно будет снова.`, ok: "Убрать", danger: true });
@@ -139,6 +155,7 @@
     if (data.friends.some((u) => String(u.id) === id)) return "friend";
     if (data.incoming.some((u) => String(u.id) === id)) return "received";
     if (data.outgoing.some((u) => String(u.id) === id)) return "sent";
+    if (data.blocked.some((u) => String(u.id) === id)) return "blocked";
     return "none";
   }
   async function invite(u) {
@@ -161,6 +178,8 @@
       row.append(el("span", "frnote", "Заявка отправлена"), btn("Отменить", "", () => act("cancel", u)));
     } else if (rel === "none") {
       row.append(btn("Добавить в друзья", "active", () => act("add", u)));
+    } else if (rel === "blocked") {
+      row.append(el("span", "frnote", "Заблокирован"), btn("Разблокировать", "", () => act("unblock", u)));
     }
   }
 
@@ -176,10 +195,16 @@
   }
 
   // ---------- рисование ----------
+  // presence с сервера: online | away («отошёл», оранжевая точка) | offline; у заявок и «слушали вместе» — null
+  const away = (u) => u?.presence === "away";
   function userRow(u, rel, { online, open = true } = {}) {
     const row = el("div", "frrow" + (open ? " open" : ""));
     const av = avatar(u);
-    if (online != null) { const d = el("i", "frdot" + (online ? " on" : "")); d.title = online ? "Приложение открыто" : "Не в сети"; av.append(d); }
+    if (online != null) {
+      const d = el("i", "frdot" + (away(u) ? " away" : online ? " on" : ""));
+      d.title = away(u) ? "Отошёл" : online ? "Приложение открыто" : "Не в сети";
+      av.append(d);
+    }
     const tx = el("div", "frtx");
     tx.append(el("b", "", u.nickname));
     if (u.app) tx.append(el("small", "", "Whisper " + (APP_LABEL[u.app] || String(u.app).slice(0, 12))));
@@ -226,11 +251,14 @@
     }
     if (loadErr) box.append(el("p", "frnote err", "Не удалось загрузить друзей: " + loadErr));
     section(box, "Заявки в друзья", data.incoming, "received");
-    const fr = [...data.friends].sort((a, b) => (b.online ? 1 : 0) - (a.online ? 1 : 0));
+    // в сети — сверху, отошедшие — за ними, не в сети — внизу
+    const rk = (u) => (away(u) ? 1 : u.online ? 0 : 2);
+    const fr = [...data.friends].sort((a, b) => rk(a) - rk(b));
     section(box, data.friends.length ? `Друзья · ${data.friends.length}` : "Друзья", fr, "friend", (u) => ({ online: !!u.online }));
     if (!data.friends.length && !loadErr) box.append(el("p", "frempty", "Пока никого. Найди друга по никнейму — он увидит заявку в приложении или в профиле на сайте."));
     section(box, "Ждут ответа", data.outgoing, "sent");
     section(box, "Слушали вместе", recent, "none", (u) => ({ online: !!u.online }));
+    section(box, `Заблокированные · ${data.blocked.length}`, data.blocked, "blocked", () => ({ open: false }));
     box.append(el("p", "frnote", "Твоих друзей видишь только ты. Друзья видят твой ник, аватар и публичные альбомы."));
   }
 
@@ -285,10 +313,11 @@
     const tx = el("div", "frtx");
     tx.append(el("h3", "", u.nickname));
     const rel = relationOf(u.id);
-    tx.append(el("small", "", { friend: "В друзьях", received: "Хочет добавить тебя в друзья", sent: "Заявка отправлена", none: "Не в друзьях" }[rel]));
+    tx.append(el("small", "", { friend: "В друзьях", received: "Хочет добавить тебя в друзья", sent: "Заявка отправлена", none: "Не в друзьях", blocked: "Заблокирован" }[rel]));
     const acts = el("div", "fracts");
     relButtons(u, rel, acts);
     if (rel === "friend") acts.append(btn("Убрать из друзей", "", () => act("remove", u)));
+    if (rel !== "blocked") acts.append(btn("Заблокировать", "", () => act("block", u), "Не сможет найти тебя, позвать и войти в твою комнату"));
     tx.append(acts);
     head.append(tx);
     box.append(head);

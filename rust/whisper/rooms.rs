@@ -170,10 +170,12 @@ pub async fn wa_room_invite(code: String, user_id: String) -> Result<WaResponse,
     room_request(true, format!("/api/rooms/{}/invite", room_code(&code)?), Some(body), None).await
 }
 
-/// Мои приглашения; с `since` сервер ждёт новых до 25 с (GET /api/rooms/invites?since=&app=).
+/// Мои приглашения; с `since` сервер ждёт новых до 25 с (GET /api/rooms/invites?since=&app=&presence=).
 /// `app` — какое это приложение («yandex», «vk»): друзья видят его рядом с ником.
+/// `presence` — мой статус для друзей: online | away («отошёл», оранжевая точка). Ожидание приглашений само
+/// «отошёл» не сбрасывает — вернулся за компьютер, приложение присылает online.
 #[tauri::command]
-pub async fn wa_room_invites(since: Option<i64>, app: Option<String>) -> Result<WaResponse, String> {
+pub async fn wa_room_invites(since: Option<i64>, app: Option<String>, presence: Option<String>) -> Result<WaResponse, String> {
     let mut url = api_url("/api/rooms/invites")?;
     {
         let mut q = url.query_pairs_mut();
@@ -182,6 +184,9 @@ pub async fn wa_room_invites(since: Option<i64>, app: Option<String>) -> Result<
         }
         if let Some(a) = app.filter(|a| (1..=20).contains(&a.len()) && a.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')) {
             q.append_pair("app", &a);
+        }
+        if let Some(p) = presence.filter(|p| matches!(p.as_str(), "online" | "away")) {
+            q.append_pair("presence", &p);
         }
     }
     let token = read_token()?;
@@ -195,6 +200,27 @@ pub async fn wa_room_invites(since: Option<i64>, app: Option<String>) -> Result<
     let status = resp.status().as_u16();
     let bytes = read_limited(resp, MAX_SMALL_BODY).await?;
     Ok(WaResponse { status, body: String::from_utf8_lossy(&bytes).into_owned() })
+}
+
+/// Мой статус для друзей — сразу, без ожидания приглашений (POST /api/rooms/presence {"status"}) → { status }.
+/// online | away | offline; offline — при выходе из приложения: друзья видят «не в сети» сразу, а не через 70 с.
+#[tauri::command]
+pub async fn wa_room_presence(status: String) -> Result<WaResponse, String> {
+    if !matches!(status.as_str(), "online" | "away" | "offline") {
+        return Err("Неизвестный статус".into());
+    }
+    let body = serde_json::json!({ "status": status });
+    room_request(true, "/api/rooms/presence".into(), Some(body), None).await
+}
+
+/// Приложение закрывается: «не в сети» для друзей. Ждём недолго — выход из-за плохой сети не должен зависать;
+/// не успели — сервер сам поставит «не в сети» по тишине. Без входа в архив ничего не отправляется.
+pub async fn presence_offline() {
+    if read_token().is_err() {
+        return;
+    }
+    let send = wa_room_presence("offline".into());
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(1500), send).await;
 }
 
 /// Отклонить приглашение (POST /api/rooms/invites/{id}/dismiss).
@@ -308,6 +334,45 @@ pub async fn wa_room_transfer(code: String, member_id: String) -> Result<WaRespo
     room_request(true, format!("/api/rooms/{}/host", room_code(&code)?), Some(body), None).await
 }
 
+/// Ведущий убирает участника и больше не пускает его в эту комнату (POST /api/rooms/{code}/kick {"memberId"}) → снимок.
+/// Сервер заодно убирает его предложения, темы, «нет трека» и приглашения в эту комнату.
+#[tauri::command]
+pub async fn wa_room_kick(code: String, member_id: String) -> Result<WaResponse, String> {
+    if !is_uuid(&member_id) {
+        return Err("Некорректный id участника".into());
+    }
+    let body = serde_json::json!({ "memberId": member_id });
+    room_request(true, format!("/api/rooms/{}/kick", room_code(&code)?), Some(body), None).await
+}
+
+/// Ведущий снова пускает убранного (DELETE /api/rooms/{code}/bans/{userId}) → снимок.
+#[tauri::command]
+pub async fn wa_room_unban(code: String, user_id: String) -> Result<WaResponse, String> {
+    if !is_uuid(&user_id) {
+        return Err("Некорректный id участника".into());
+    }
+    let url = api_url(&format!("/api/rooms/{}/bans/{user_id}", room_code(&code)?))?;
+    let token = read_token()?;
+    let resp = json_client()
+        .delete(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| format!("Whisper Archive недоступен: {e}"))?;
+    let status = resp.status().as_u16();
+    let bytes = read_limited(resp, MAX_SMALL_BODY).await?;
+    Ok(WaResponse { status, body: String::from_utf8_lossy(&bytes).into_owned() })
+}
+
+/// Ведущий закрывает или открывает вход (POST /api/rooms/{code}/lock {"locked"}) → снимок.
+/// В закрытую комнату входят только те, кого позвал ведущий.
+#[tauri::command]
+pub async fn wa_room_lock(code: String, locked: bool) -> Result<WaResponse, String> {
+    let body = serde_json::json!({ "locked": locked });
+    room_request(true, format!("/api/rooms/{}/lock", room_code(&code)?), Some(body), None).await
+}
+
 /// Результат проверки пинга: `ms` — лучшее время ответа сервера комнат из трёх попыток (0 — замерить не удалось),
 /// `status` — HTTP-статус замера (404 — комнаты нет), `report` — ответ сервера на отправку пинга (None — не отправляли).
 #[derive(serde::Serialize)]
@@ -386,6 +451,8 @@ mod room_tests {
     #[test]
     fn codes() {
         assert!(room_code("ABC234").is_ok());
+        assert!(room_code("K7QH2MXP4R").is_ok()); // новые коды — 10 знаков
+        assert!(room_code("K7QH2-MXP4R").is_err()); // дефисы убирает интерфейс
         assert!(room_code("abc234").is_err());
         assert!(room_code("ABC/../x").is_err());
         assert!(room_code("").is_err());

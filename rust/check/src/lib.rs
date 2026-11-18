@@ -63,6 +63,8 @@ pub async fn api_surface(req: tauri::http::Request<Vec<u8>>) {
     let _ = whisper::friends::wa_friend_request("x".into()).await;
     let _ = whisper::friends::wa_friend_accept("x".into()).await;
     let _ = whisper::friends::wa_friend_remove("x".into()).await;
+    let _ = whisper::friends::wa_friend_block("x".into()).await;
+    let _ = whisper::friends::wa_friend_unblock("x".into()).await;
     let _ = whisper::friends::wa_user_profile("x".into()).await;
     let _ = whisper::friends::wa_image("avatar".into(), "x".into(), None).await;
     obs::obs_state(serde_json::json!({ "cover": "https://evil.com/x" }));

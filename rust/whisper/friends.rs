@@ -79,6 +79,18 @@ pub async fn wa_friend_remove(id: String) -> Result<WaResponse, String> {
     call(reqwest::Method::DELETE, api_url(&format!("/api/friends/{}", uuid(&id)?))?).await
 }
 
+/// Заблокировать: дружба и заявки пропадают, он не найдёт тебя, не позовёт и не войдёт в твою комнату → { relation: "blocked" }.
+#[tauri::command]
+pub async fn wa_friend_block(id: String) -> Result<WaResponse, String> {
+    call(reqwest::Method::POST, api_url(&format!("/api/friends/{}/block", uuid(&id)?))?).await
+}
+
+/// Разблокировать (DELETE /api/friends/{id}/block) → { relation }.
+#[tauri::command]
+pub async fn wa_friend_unblock(id: String) -> Result<WaResponse, String> {
+    call(reqwest::Method::DELETE, api_url(&format!("/api/friends/{}/block", uuid(&id)?))?).await
+}
+
 /// Публичный профиль: { id, nickname, avatar, albums: [{ id, title, trackCount, cover, visibility }] } (GET /api/profile/{id}).
 /// Чужой профиль — только публичные альбомы; свой сервер отдаёт целиком.
 #[tauri::command]

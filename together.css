@@ -34,6 +34,7 @@
 .rmfriend .rmact { flex: none; }
 .rmfdot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); opacity: .45; }
 .rmfdot.on { background: #3ecf6e; opacity: 1; box-shadow: 0 0 6px rgba(62,207,110,.6); }
+.rmfdot.away { background: #f5a524; opacity: 1; box-shadow: 0 0 6px rgba(245,165,36,.55); }   /* отошёл */
 .rmfname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :root[data-style="royal"] .rmfriend, :root[data-style="steam"] .rmfriend { border-radius: 3px; }
 /* «Сохранять их в мой архив» — уточнение к «Делиться треками, которых нет у гостей», со сдвигом под ней */
@@ -221,6 +222,15 @@
 .togetherbtn.wink { animation: rtWink .5s ease-in-out 3; color: var(--accent); }
 @keyframes rtWink { 0%, 100% { transform: none; } 30% { transform: translateY(-3px) rotate(-8deg); } 60% { transform: translateY(0) rotate(6deg); } }
 :root[data-anim="off"] .rmwinks, :root[data-anim="off"] .togetherbtn.wink { animation: none; }
+/* ведущий: «⛔» — убрать участника; убранные — приглушённо, с кнопкой «Вернуть» */
+.rmkickbtn { flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; display: grid; place-items: center;
+  font-size: 13px; line-height: 1; cursor: pointer; background: rgba(255,255,255,.06); opacity: .5; transition: opacity .15s, background .15s; }
+.rmkickbtn:hover, .rmkickbtn:focus-visible, .rmkickbtn.on { opacity: 1; background: rgba(255, 80, 80, .2); }
+.rmkickbtn.on { box-shadow: inset 0 0 0 1px rgba(255, 90, 90, .8); }
+.rmconfirm.rmkick { background: rgba(255, 80, 80, .09); box-shadow: inset 0 0 0 1px rgba(255, 90, 90, .4); margin: -2px 0 2px; }
+.rmperson.banned { opacity: .65; }
+.rmperson.banned .nav { flex: none; padding: 4px 10px; font-size: 12px; }
+:root[data-style="royal"] .rmkickbtn, :root[data-style="steam"] .rmkickbtn { border-radius: 3px; }
 :root[data-style="royal"] .rmwinkbtn, :root[data-style="steam"] .rmwinkbtn,
 :root[data-style="royal"] .rmwinks, :root[data-style="steam"] .rmwinks,
 :root[data-style="royal"] .rmwinkb, :root[data-style="steam"] .rmwinkb { border-radius: 3px; }
