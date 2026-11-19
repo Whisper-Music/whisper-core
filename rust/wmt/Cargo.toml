@@ -1,0 +1,18 @@
+# Чтение тем .wmt на Rust — без зависимостей (свой inflate и JSONC), для приложений Whisper и сторонних программ
+# с нативным интерфейсом (iced, egui, Slint, GTK…). Формат — docs/WMT-FORMAT.md. Подключить:
+#   whisper-wmt = { git = "https://github.com/Whisper-Music/whisper-core" }
+# Тесты запускай только в отдельной копии whisper-core, не в src/core приложения (папка target попала бы в установщик).
+[package]
+name = "whisper-wmt"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Чтение тем Whisper (.wmt): текст и zip-архив, tokens, ресурсы — без зависимостей"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Whisper-Music/whisper-core"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]

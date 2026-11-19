@@ -21,7 +21,7 @@
   let started = false, last = "";
 
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(dc)); } catch {} };
-  const call = (cmd, args) => Promise.resolve(window.__TAURI__.core.invoke(cmd, args));
+  const call = (cmd, args) => W.host.invoke(cmd, args);
 
   // ---------- что играет ----------
   // «Играет» — не просто audio.paused === false: плеер может стоять на загрузке, буферизации или после ошибки
@@ -124,7 +124,7 @@
     paintModal();
   }
 
-  window.__TAURI__.event?.listen("discord-status", (e) => { if (e.payload && typeof e.payload === "object") { st = e.payload; paint(); } });
+  W.host.listen("discord-status", (e) => { if (e.payload && typeof e.payload === "object") { st = e.payload; paint(); } }).catch(() => {});
 
   // ---------- окно ----------
   let m = null, tick = 0;

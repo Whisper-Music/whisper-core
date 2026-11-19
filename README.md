@@ -13,6 +13,8 @@
 | `whisper-core.js` | ядро: события, сущности, провайдер и его возможности (`caps`), `Whisper.player`, `Whisper.queue`, источники звука, роли интерфейса для тем |
 | `wmt.js` | формат темы `.wmt`: разбор и сборка (текст и zip-архив), браузер и Node |
 | `theme-css.js` | движок CSS тем: привязка к стилю, фильтр безопасности, роли → селекторы, `tokens`, виджет OBS |
+| `embed.js` | темы `.wmt` в любом веб-приложении одним вызовом: `WhisperEmbed.applyTheme(bytes, { app, map })` |
+| `index.mjs`, `themes.mjs`, `index.d.ts`, `package.json` | вход для сборщиков (`import … from "whisper-core"`), для Node без DOM (`whisper-core/themes`), типы |
 | `base.css` | базовое оформление общих классов (окна, кнопки, переключатели…) для приложения без своих |
 | `queue.js` + `queue.css` | панель «Очередь и история» (клавиша Q) |
 | `archive.js` + `archive.css` | Whisper Archive: свои треки вместо версий сервиса, вход по почте, «Сохранить в архив» |
@@ -24,9 +26,21 @@
 | `rust/obs.rs` + `rust/obs/` | Rust-часть виджета OBS: локальный сервер и страница виджета |
 | `rust/whisper_host.example.rs` | образец того, что приложение даёт Rust-части (хранилище ключа, семафор, Origin, подпись) |
 | `rust/check/` | сборка и тесты `rust/whisper/` без приложения |
+| `rust/wmt/` | крейт `whisper-wmt`: чтение `.wmt` на Rust без зависимостей (для нативных интерфейсов) |
 | `CLAUDE.md` | памятка для работы с ядром: правила, подключение, контракт, проверка |
 | `docs/CORE.md` | полное описание ядра: события, провайдер, плеер, роли, общие модули, подключение |
 | `docs/WMT-FORMAT.md` | строгое описание формата `.wmt` |
+| `docs/EMBED.md` | ядро и темы в своём приложении: для независимых авторов (Electron, обёртки над сайтами, Rust) |
+
+## Своё приложение, не Whisper
+
+Темы `.wmt` и ядро можно встроить в своё приложение с другим интерфейсом — от пары строк для тем до общих модулей
+плеера. Как — `docs/EMBED.md`.
+
+```js
+import { WhisperEmbed } from "whisper-core";        // npm install github:Whisper-Music/whisper-core
+await WhisperEmbed.applyTheme(bytes, { app: "my-player", map: { "color.accent": "--brand" } });
+```
 
 ## Подключение в приложение
 
@@ -76,11 +90,25 @@ mod whisper_host; // своё у приложения: скопировать ru
   (`Whisper.ui.provide`), а не код ядра под одно приложение.
 * Проверка без приложения: `node --check *.js`; `cargo test --lib` в `rust/check` (Windows или Linux с библиотеками Tauri).
   То же делает CI (`.github/workflows/check.yml`).
-  **Запускай `rust/check` только в отдельной копии whisper-core, не в `src/core` приложения:** Tauri встраивает в
+  **Запускай `rust/check` и `rust/wmt` только в отдельной копии whisper-core, не в `src/core` приложения:** Tauri встраивает в
   программу всю папку `src`, и папка сборки `rust/check/target` (гигабайты) попала бы в установщик.
 
-Версия ядра — `Whisper.version` (`whisper-core.js`) и `WhisperThemeCss.VERSION` (`theme-css.js`).
+Версия ядра — `Whisper.version` (`whisper-core.js`), `WhisperThemeCss.VERSION` (`theme-css.js`), `WhisperEmbed.VERSION`
+и `package.json` (одна и та же).
 
 ## Лицензия
 
-[PolyForm Noncommercial 1.0.0](LICENSE), как у приложений Whisper.
+Copyright © 2026 Whisper Music (https://github.com/Whisper-Music/whisper-core)
+
+[GNU GPL версии 3 или любой более поздней](LICENSE) (`GPL-3.0-or-later`). Ядром может пользоваться кто угодно и
+где угодно, в том числе в коммерческих проектах, но программа, в которую оно встроено, при распространении тоже
+должна быть открытой под GPL-3.0 (или совместимой с ней лицензией) — вместе с исходным кодом. В закрытых программах
+ядро использовать нельзя.
+
+**Исключение для приложений Whisper** (`LICENSE-EXCEPTION.md`, дополнительное разрешение по разделу 7 GPL):
+Whisper Yandex, Whisper VK, Whisper Mixer и их некоммерческие форки распространяются вместе с ядром по PolyForm
+Noncommercial 1.0.0 — их код открыт, но продавать их нельзя, и переводить их на GPL не нужно. Код самого ядра
+при этом остаётся открытым под GPL.
+
+Формат `.wmt` и протокол Whisper API описаны открыто (`docs/WMT-FORMAT.md`, `docs/API.md`): их можно реализовать
+самостоятельно, не беря код ядра, — тогда лицензия ядра не действует.

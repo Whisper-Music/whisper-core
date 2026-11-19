@@ -159,6 +159,10 @@ night-sky.wmt   (= zip)
 
 Новые общие поля можно добавлять в следующих версиях — старые читатели их просто не заметят.
 
+Приложение с другим интерфейсом решает само, куда ставить эти значения: `WhisperThemeCss.tokensMapCss(tokens, карта)`
+(или `WhisperEmbed.applyTheme(…, { map })`) — карта «токен → CSS-переменная или `селектор { свойство }`»; в Rust — крейт
+`whisper-wmt` (`Theme::tokens()`, `rgba()`). Подробно — docs/EMBED.md.
+
 ---
 
 ## 4. `css <приложение>` — внешний вид конкретного приложения
@@ -199,7 +203,8 @@ night-sky.wmt   (= zip)
 | Виджет «Сейчас играет» для OBS (часть Whisper Music) | `whisper-obs` |
 | Все приложения Whisper сразу (общие правила по ролям) | `whisper-core` |
 
-Новые приложения берут свой id в том же стиле (`whisper-<что-то>`).
+Новые приложения Whisper берут свой id в том же стиле (`whisper-<что-то>`). Сторонние приложения — свой id без
+`whisper-`, лучше с ником автора (`nick-player`), и описывают свои классы для авторов тем (docs/EMBED.md).
 
 ## 4¼. `css whisper-core` — общие правила для всех приложений Whisper
 
@@ -496,6 +501,10 @@ theme.settings("whisper-studio");             // {} если секции нет
 theme.background;                             // { name: "background.jpg", mime, bytes } или null — фона нет
 theme.asset("asset:preview.png");             // любой файл архива по имени или null
 ```
+
+Применить тему в своём веб-приложении одним вызовом — `WhisperEmbed.applyTheme(bytes, { app, map })` (`core/embed.js`).
+В Rust — крейт `whisper-wmt` из `rust/wmt` (те же правила и лимиты): `whisper_wmt::open(&bytes)?.tokens()`.
+Всё о встраивании — docs/EMBED.md.
 
 Сборка: `await WMT.pack({ comment, manifest, tokens, css: { app: "…" }, settings: { app: {…} }, background: { ext: "jpg", bytes }, files: [{ name, bytes }] })`
 — архив `.wmt`, а без фона и файлов — просто текст. Только текст: `WMT.serialize({ … })`.

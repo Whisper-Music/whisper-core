@@ -266,6 +266,75 @@
     return (root.length ? `:root { ${root.join("; ")}; }\n` : "") + (body.length ? `body { ${body.join("; ")}; }\n` : "") + blocks;
   }
 
+  // ---------- все tokens по карте приложения ----------
+  // tokensCss выше — старое поведение Whisper Yandex: accent, accent2 и effects там применяет само приложение
+  // (это стартовые значения, пользователь их потом меняет в настройках). Чужому приложению своего theme.js писать
+  // не нужно: оно даёт карту «токен → куда его поставить», и ядро само собирает CSS из ВСЕХ tokens.
+  // Цель — переменная («--sc-accent», ставится на :root стиля) или «селектор { свойство }» («.header { background-color }»).
+  // Можно несколько целей массивом. Токена нет в карте — он не применяется; значения из темы проходят те же проверки.
+  const TOKENS = {
+    "color.accent": { hex: true }, "color.accent2": { hex: true },
+    "color.text": {}, "color.muted": {}, "color.background": {},
+    "effects.glow": { num: [0, 48], unit: "px" }, "effects.panelOpacity": { num: [0.2, 1] },
+    "effects.dim": { num: [0, 0.85] }, "effects.backgroundBlur": { num: [0, 48], unit: "px" },
+    "font.body": {}, "font.display": {},
+  };
+  // Переменные Whisper — карта по умолчанию (её же можно взять за основу: { ...WhisperThemeCss.TOKEN_MAP, … }).
+  const TOKEN_MAP = Object.freeze({
+    "color.accent": "--accent", "color.accent2": "--accent2", "color.text": "--text", "color.muted": "--muted",
+    "color.background": "body { background }",
+    "effects.glow": "--glow", "effects.panelOpacity": "--panel-a", "effects.dim": "--bg-dim", "effects.backgroundBlur": "--bg-blur",
+    "font.body": "body { font-family }", "font.display": "--font-display",
+  });
+  const VAR_RE = /^--[a-zA-Z0-9_-]{1,60}$/, TARGET_RE = /^([^{};<>\\]{1,300})\{\s*(-?[a-z][a-z0-9-]{0,60})\s*\}$/;
+  // значение токена для CSS или "" (нет, не того вида, опасное)
+  function tokenVal(tokens, key) {
+    const spec = TOKENS[key];
+    if (!spec) return "";
+    const [g, k] = key.split("."), v = tokens?.[g]?.[k];
+    if (spec.hex) return typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : "";
+    if (spec.num) {
+      if (typeof v !== "number" || !isFinite(v)) return "";
+      const n = Math.min(spec.num[1], Math.max(spec.num[0], v));
+      return String(Math.round(n * 1000) / 1000) + (spec.unit || "");
+    }
+    return cssVal(v);
+  }
+  // CSS из tokens по карте: { "color.accent": "--sc-accent" | [".a { color }", "--x"] }. map === true — переменные Whisper.
+  function tokensMapCss(tokens, map = TOKEN_MAP, opts = {}) {
+    if (map === true || !map || typeof map !== "object") map = TOKEN_MAP;
+    const rules = new Map([[":root", []]]);                // селектор -> объявления (порядок сохраняется)
+    const put = (sel, decl) => (rules.get(sel) || rules.set(sel, []).get(sel)).push(decl);
+    for (const [key, target] of Object.entries(map)) {
+      const val = tokenVal(tokens, key);
+      if (!val) continue;
+      for (const t of [].concat(target)) {
+        const s = typeof t === "string" ? t.trim() : "";
+        if (VAR_RE.test(s)) { put(":root", `${s}: ${val}`); continue; }
+        const m = TARGET_RE.exec(s);
+        if (m) put(m[1].trim(), `${m[2]}: ${val}`);
+        else if (s) console.warn(`WhisperThemeCss: цель «${s}» для «${key}» пропущена — нужна «--переменная» или «селектор { свойство }»`);
+      }
+    }
+    let css = "";
+    for (const [sel, decls] of rules) if (decls.length) css += `${sel} { ${decls.join("; ")}; }\n`;
+    // как в tokensCss: блоки, где приложение само переопределяет второстепенный текст
+    const muted = tokenVal(tokens, "color.muted"), mv = [].concat(map["color.muted"] || []).filter((t) => VAR_RE.test(t));
+    if (muted && opts.mutedIn && mv.length) css += `${opts.mutedIn} { ${mv.map((v) => `${v}: ${muted}`).join("; ")}; }\n`;
+    return css;
+  }
+
+  // Какие роли [data-w="…"] тема использует (в общей секции и, если дан app, в секции приложения), по алфавиту.
+  // Приложение сверяет их со своими (Whisper.ui.coverage) и честно показывает, насколько тема ему подходит.
+  function rolesUsed(th, app) {
+    const set = new Set(), re = /\[\s*data-w\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\]\s"']+))\s*\]/gi;
+    for (const sec of [CORE, app].filter(Boolean)) {
+      const css = String(th?.css?.(sec) || "").replace(/\/\*[\s\S]*?\*\//g, "");
+      for (const m of css.matchAll(re)) { const r = (m[1] ?? m[2] ?? m[3] ?? "").trim(); if (/^[a-z][a-z0-9.:-]{0,80}$/.test(r)) set.add(r); }
+    }
+    return [...set].sort();
+  }
+
   // ---------- ресурсы темы ----------
   const ASSET_URL = /url\(\s*(['"]?)asset:([\w.-]+)\1\s*\)/gi;
   // url(asset:имя) -> url("<адрес>"): make(ресурс) отдаёт адрес (обычно blob:) или "" — тогда none.
@@ -276,12 +345,15 @@
   });
   // Весь CSS темы для приложения app, привязанный к стилю id: общая секция ролей → секция приложения → tokens.
   // Ресурсы — blob: (их адреса возвращаются в urls: освободить через URL.revokeObjectURL, когда тема больше не нужна).
-  // opts: core (имя общей секции), resolve (роли), mutedIn (см. tokensCss), extra (CSS приложения после tokens).
+  // opts: core (имя общей секции), resolve (роли), mutedIn (см. tokensCss), extra (CSS приложения после tokens),
+  // tokenMap (карта для tokensMapCss; true — переменные Whisper).
   function themeCss(th, id, app, opts = {}) {
     const urls = [];
     // значения из tokens идут после CSS темы — они главнее тех же переменных в CSS;
     // общая секция ролей — первой: правила под это приложение идут после и перекрывают её
-    let css = (th.css(opts.core || CORE) || "") + "\n" + (th.css(app) || "") + "\n" + tokensCss(th.tokens, opts) + (opts.extra || "");
+    // opts.tokenMap — все tokens по карте приложения (tokensMapCss); без неё — как раньше, только общая часть
+    const tk = opts.tokenMap ? tokensMapCss(th.tokens, opts.tokenMap, opts) : tokensCss(th.tokens, opts);
+    let css = (th.css(opts.core || CORE) || "") + "\n" + (th.css(app) || "") + "\n" + tk + (opts.extra || "");
     css = withAssets(css, th, (a) => { const u = URL.createObjectURL(new Blob([a.bytes], { type: a.mime })); urls.push(u); return u; });
     return { css: scopeCss(css, id, new Set(urls), opts), urls };      // наружу CSS темы не ходит: разрешены только blob:-ресурсы этой же темы
   }
@@ -330,10 +402,11 @@
 
   const CORE = "whisper-core", OBS = "whisper-obs";
   const api = {
-    VERSION: "0.1.0", CORE, OBS, INTRO,
+    VERSION: "0.2.0", CORE, OBS, INTRO,
     splitTop, cssParse, ruleText, splitDecls, unesc, cssSafe, scopeSel, scopeCss, extractFrom,
-    cssVal, tokensCss, withAssets, themeCss, obsCss, introInfo, introCss,
+    cssVal, tokensCss, TOKENS, TOKEN_MAP, tokenVal, tokensMapCss, rolesUsed, withAssets, themeCss, obsCss, introInfo, introCss,
   };
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
-  else root.WhisperThemeCss = Object.freeze(api);
+  // и глобально, и для require: так файл работает обычным <script>, в Node и при import из сборщиков (index.mjs)
+  root.WhisperThemeCss = Object.freeze(api);
+  if (typeof module !== "undefined" && module.exports) module.exports = root.WhisperThemeCss;
 })(typeof window !== "undefined" ? window : globalThis);

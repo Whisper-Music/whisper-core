@@ -1,0 +1,19 @@
+{
+  "name": "whisper-core",
+  "version": "0.2.0",
+  "description": "Ядро приложений Whisper: шина событий, плеер, роли интерфейса и темы .wmt — для встраивания в свои приложения",
+  "license": "GPL-3.0-or-later",
+  "repository": { "type": "git", "url": "https://github.com/Whisper-Music/whisper-core.git" },
+  "main": "./themes.cjs",
+  "module": "./index.mjs",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": { "types": "./index.d.ts", "import": "./index.mjs" },
+    "./themes": { "types": "./index.d.ts", "import": "./themes.mjs", "require": "./themes.cjs" },
+    "./*.js": "./*.js",
+    "./*.css": "./*.css",
+    "./package.json": "./package.json"
+  },
+  "files": ["*.js", "*.mjs", "*.cjs", "*.css", "*.d.ts", "docs/", "LICENSE", "LICENSE-EXCEPTION.md", "README.md"],
+  "sideEffects": true
+}

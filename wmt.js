@@ -379,6 +379,7 @@
   }
 
   const api = { VERSION, MAX_FILE, parse, serialize, open, pack, isZip, unzip, zip, BG_EXT, mimeOf, stripJsonc, WmtError, ID_RE, NAME_RE };
+  // и глобально, и для require: так файл работает обычным <script>, в Node и при import из сборщиков (index.mjs)
+  root.WMT = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
-  else root.WMT = api;
 })(typeof window !== "undefined" ? window : globalThis);

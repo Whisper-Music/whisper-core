@@ -1,2 +1,5 @@
 rust/check/target/
 rust/check/Cargo.lock
+rust/wmt/target/
+rust/wmt/Cargo.lock
+node_modules/

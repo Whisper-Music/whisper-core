@@ -10,7 +10,7 @@
   const W = window.Whisper;
   if (!W) return;
   const kit = W.ui.kit;
-  const { invoke } = window.__TAURI__.core;
+  const invoke = (c, a, o) => W.host.invoke(c, a, o);
   const toast = (...a) => kit.toast?.(...a);
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };

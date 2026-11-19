@@ -5,10 +5,13 @@
 // С ядром всё само: id и название — из Whisper.app, обработчики тем — из набора интерфейса (kit.themeImport /
 // kit.themeExport, те же, что у «Тем комнаты»), карточка «Приложения Whisper» — в настройках (kit.settingsCard).
 (() => {
-  const T = window.__TAURI__;
-  if (!T?.core || !T?.event || window.WhisperApi) return;
+  if (window.WhisperApi) return;
   const W = window.Whisper || null;
-  const invoke = (c, a, o) => Promise.resolve(T.core.invoke(c, a, o));
+  // связь с бэкендом: с ядром — Whisper.host (Tauri или свой хост приложения), без ядра — window.__TAURI__ напрямую
+  const T = window.__TAURI__;
+  const H = W?.host || (T?.core?.invoke ? { invoke: (c, a, o) => T.core.invoke(c, a, o), listen: T.event?.listen ? (ev, fn) => T.event.listen(ev, fn) : null, has: (k) => k === "invoke" || (k === "listen" && !!T.event?.listen) } : null);
+  if (!H || !H.has("invoke") || !H.has("listen")) return;      // API нужно и звать Rust, и слушать его события
+  const invoke = (c, a, o) => Promise.resolve(H.invoke(c, a, o));
   const enc = new TextEncoder(), dec = new TextDecoder();
   // как cap_ok в rust/api.rs: «GET theme», «POST theme», «GET theme/file»
   const capOk = (c) => /^(GET|POST) [a-z0-9._\/-]{1,64}$/.test(c) && !/ \/|\/$|\/\/|\.\./.test(c);
@@ -58,7 +61,7 @@
     if (o) info = { id: String(o.id || ""), name: String(o.name || ""), version: String(o.version || "") };
     if (!info?.id) return false;
     if (!on) { await stop(); return false; }
-    listening ||= Promise.resolve(T.event.listen("wapi", (e) => dispatch(e.payload))).catch((e) => { listening = null; throw e; });
+    listening ||= Promise.resolve(H.listen("wapi", (e) => dispatch(e.payload))).catch((e) => { listening = null; throw e; });
     try {
       await listening;
       await invoke("wapi_start", { info: { ...info, caps: [...handlers.keys()] } });
@@ -192,7 +195,7 @@
   // версия программы — для /v1/info (у Whisper Yandex в setApp её нет)
   (async () => {
     let version = W.app.version;
-    if (!version) { try { version = (await T.app?.getVersion?.()) || ""; } catch {} }
+    if (!version) { try { version = (await T?.app?.getVersion?.()) || ""; } catch {} }
     start({ id: W.app.id, name: W.app.name || W.app.id, version });
   })();
 })();

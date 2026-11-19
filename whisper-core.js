@@ -280,6 +280,7 @@
   // ничего не находит: селектор с ней выбрасывается, остальные из того же списка остаются.
   const ROLE_RE = /^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*(:[a-z][a-z0-9-]*)*$/;
   const roles = new Map();          // роль -> селекторы приложения
+  let tokenMap = null;              // карта tokens приложения (ui.tokens)
   const roleCache = new Map();
   function define(map) {
     for (const [k, v] of Object.entries(map || {})) {
@@ -355,6 +356,13 @@
     "radio": "кнопка/блок бесконечного потока («Моя волна», «VK Микс»)", "radio.stations": "выбор станции/настроения потока",
     "visualizer": "сцена визуализатора", "visualizer:fullscreen": "визуализатор на весь экран",
     "menu": "всплывающее меню", "menu.item": "пункт меню", "toast": "всплывающая подсказка", "dialog": "окно-диалог", "dialog.backdrop": "затемнение под окном-диалогом", "queue": "панель очереди",
+    // не только плеер: роли для приложений с другим устройством (обёртки над сайтами, мессенджеры, свои программы)
+    "header": "верхняя панель приложения (шапка сайта)", "header.logo": "логотип/название в шапке",
+    "profile": "кнопка или блок своего профиля", "avatar": "аватар (свой или собеседника)",
+    "input": "поле ввода (кроме поиска)", "link": "ссылка в тексте", "badge": "значок-счётчик (непрочитанные, новое)",
+    "list": "обычный список (не треки): чаты, друзья, результаты", "list.item": "строка обычного списка", "list.item:active": "выбранная строка списка",
+    "waveform": "форма волны трека (вместо или поверх полосы воспроизведения)", "comment": "комментарий",
+    "chat": "окно переписки", "chat.message": "сообщение", "chat.message:own": "своё сообщение", "chat.input": "поле ввода сообщения",
     "fullplayer": "плеер на весь экран", "fullplayer.seek": "полоса воспроизведения на весь экран", "fullplayer.prev": "«назад» на весь экран", "fullplayer.next": "«вперёд» на весь экран", "lyrics": "текст песни", "lyrics.line": "строка текста", "lyrics.line:active": "звучащая строка",
   };
   // Набор интерфейса приложения для общих модулей (панель очереди и т.п.): подсказки, подтверждения, меню трека,
@@ -410,9 +418,68 @@
     roles: () => Object.fromEntries(roles),
     vocabulary: () => ({ ...VOCAB }),
     has: (role) => !!selector(role),
+    // Насколько тема подходит приложению: roles — список ролей темы (WhisperThemeCss.rolesUsed(th, app.id)).
+    // { used, have, missing, ratio } — ratio от 0 до 1 (1 — у приложения есть все роли темы; ролей нет — тоже 1).
+    coverage(list) {
+      const used = [...new Set([].concat(list || []).map(String))].filter((r) => ROLE_RE.test(r));
+      const have = used.filter((r) => !!selector(r)), missing = used.filter((r) => !selector(r));
+      return { used, have, missing, ratio: used.length ? Math.round((have.length / used.length) * 100) / 100 : 1 };
+    },
+    // Карта «токен темы → переменная или свойство приложения» для WhisperThemeCss.tokensMapCss / themeCss({ tokenMap }).
+    // Чужому приложению не нужен свой код для цветов и эффектов: { "color.accent": "--my-accent", "effects.glow": "--my-glow" }.
+    // Без вызова — null (каждое приложение решает само; Whisper Yandex применяет accent и effects у себя, theme.js).
+    tokens: (map) => { tokenMap = map && typeof map === "object" ? { ...map } : null; emit("ui:tokens", {}); },
+    tokenMap: () => (tokenMap ? { ...tokenMap } : null),
     // элементы роли в документе — для модулей, которым нужно найти «все поиски» или «кнопку громкости» в любом приложении
     all: (role, root = document) => { const s = selector(role); try { return s ? [...root.querySelectorAll(s)] : []; } catch { return []; } },
   };
+
+  // ---------- хост: чем приложение связано со своим бэкендом ----------
+  // Модули ядра не зовут window.__TAURI__ сами: всё идёт через Whisper.host. В приложении на Tauri ничего делать
+  // не нужно — хост по умолчанию берёт window.__TAURI__ (и браузерную версию через webshim.js тоже). Приложение
+  // на другой основе (Electron, обёртка над сайтом, своя страница с сервером) даёт свои функции:
+  //   Whisper.setHost({ invoke(cmd, args, opts) → Promise, listen(event, fn) → Promise<unlisten>, fileUrl(path, scheme),
+  //                     openUrl(url), attention() })
+  // Чего хост не дал — модуль это не делает (invoke без хоста — отказ с понятной ошибкой, listen — пустая отписка).
+  // Функции берутся при каждом вызове, а не при подключении: window.__TAURI__ может появиться позже ядра.
+  let hostApp = null;
+  const tauriHost = () => {
+    const T = window.__TAURI__;
+    if (!T?.core?.invoke) return null;
+    return {
+      kind: "tauri",
+      invoke: (c, a, o) => T.core.invoke(c, a, o),
+      listen: T.event?.listen ? (ev, fn) => T.event.listen(ev, fn) : null,
+      fileUrl: T.core.convertFileSrc ? (p, s) => T.core.convertFileSrc(p, s) : null,
+      openUrl: T.opener?.openUrl ? (u) => T.opener.openUrl(u) : null,
+      attention: () => T.window?.getCurrentWindow?.().requestUserAttention(2),
+    };
+  };
+  const hostFn = (k) => { const h = hostApp || tauriHost(); return typeof h?.[k] === "function" ? h[k] : null; };
+  const hostApi = Object.freeze({
+    kind: () => (hostApp ? hostApp.kind || "custom" : tauriHost() ? "tauri" : ""),
+    has: (k) => !!hostFn(k),
+    invoke(cmd, args, opts) {
+      const f = hostFn("invoke");
+      if (!f) return Promise.reject(new Error(`Whisper: нет хоста для «${cmd}» — подключи Tauri или Whisper.setHost({ invoke })`));
+      try { return Promise.resolve(f(cmd, args, opts)); } catch (e) { return Promise.reject(e); }
+    },
+    listen(ev, fn) {
+      const f = hostFn("listen");
+      if (!f) return Promise.resolve(() => {});
+      try { return Promise.resolve(f(ev, fn)); } catch (e) { return Promise.reject(e); }
+    },
+    fileUrl: (p, scheme) => { const f = hostFn("fileUrl"); return f ? f(p, scheme) : ""; },
+    openUrl: (u) => { const f = hostFn("openUrl"); if (f) return Promise.resolve(f(u)).catch(() => {}); try { window.open(u, "_blank", "noopener"); } catch {} return Promise.resolve(); },
+    attention: () => { const f = hostFn("attention"); try { Promise.resolve(f?.()).catch(() => {}); } catch {} },
+  });
+  function setHost(o) {
+    if (o === null) { hostApp = null; emit("host", { kind: hostApi.kind() }); return; }
+    if (!o || typeof o !== "object") return;
+    hostApp = { kind: str(o.kind || "custom", 20) };
+    for (const k of ["invoke", "listen", "fileUrl", "openUrl", "attention"]) if (typeof o[k] === "function") hostApp[k] = o[k];
+    emit("host", { kind: hostApi.kind() });
+  }
 
   // ---------- приложение ----------
   // Кто мы: id секции темы этого приложения (css <id>), название, версия. Темы читают общую секцию «whisper-core»
@@ -422,7 +489,7 @@
   const app = { id: "", name: "", version: "", storage: "whisper_" };
 
   window.Whisper = Object.freeze({
-    version: "0.1.0",
+    version: "0.2.0",
     CORE_SECTION: "whisper-core",
     app,
     setApp: (o) => { Object.assign(app, { id: str(o?.id, 40), name: str(o?.name, 80), version: str(o?.version, 40), storage: /^[\w.-]{1,20}$/.test(o?.storage || "") ? o.storage : app.storage }); emit("app", { ...app }); },
@@ -430,6 +497,7 @@
     entity, cover, to,
     registerProvider, useProvider, provider: () => cur, providers: () => [...providers.values()], caps,
     player, queue, ui, sources: sourceApi,
+    host: hostApi, setHost,              // связь модулей с бэкендом приложения (Tauri по умолчанию)
     modules: {},                         // общие модули кладут сюда свой API: Whisper.modules.archive.login() и т.п.
   });
 })();

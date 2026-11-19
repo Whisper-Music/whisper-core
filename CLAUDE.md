@@ -5,6 +5,13 @@
 В каждом приложении ядро лежит **git-подмодулем в `src/core`**. Полное описание API — `docs/CORE.md`, формат тем —
 `docs/WMT-FORMAT.md`. Этот файл — короткая памятка: что важно не сломать и как всё подключается.
 
+## Лицензия
+
+Ядро — **GPL-3.0-or-later** (`LICENSE`) + дополнительное разрешение для приложений Whisper (`LICENSE-EXCEPTION.md`):
+Whisper Yandex, Whisper VK, Whisper Mixer и их некоммерческие форки идут вместе с ядром по PolyForm Noncommercial.
+Новое приложение Whisper, которому нужно то же, — дописать в список в `LICENSE-EXCEPTION.md`. Не вставляй в ядро
+чужой код под несовместимыми с GPL-3.0 лицензиями.
+
 ## Главное правило
 
 **В ядре нет ничего про конкретный сервис и конкретную разметку.** Ни Яндекса, ни VK, ни `#play`, ни `main.js`.
@@ -21,6 +28,8 @@
 - Модуль — IIFE `(() => { … })();`, свои помощники (`$w`, `$d`, `el`) внутри, наружу — только через `Whisper.*`
   (`Whisper.modules.<имя>`) и перечисленные ниже старые `window.*`.
 - Модуль начинается с `const W = window.Whisper; if (!W) return;` — без ядра он молча не работает, а не падает.
+- **Бэкенд — только через `W.host`** (`invoke`, `listen`, `fileUrl`, `openUrl`, `attention`), не `window.__TAURI__`:
+  ядро встраивают и приложения не на Tauri (`Whisper.setHost`). Исключение — `api.js` без ядра (берёт Tauri сам).
 - Rust: `#[tauri::command] pub fn/async fn имя(…) -> Result<…, String>`, тяжёлое — в `spawn_blocking`, у зависимости
   в `Cargo.toml` приложения — комментарий «зачем».
 
@@ -36,6 +45,8 @@ archive.js/.css        Whisper Archive: источник звука «archive»,
 together.js/.css       «Слушать вместе»: комнаты на сервере архива
 discord.js/.css        Discord Rich Presence
 obs.js/.css            виджет «Сейчас играет» для OBS
+embed.js               темы в чужом приложении одним вызовом (WhisperEmbed.applyTheme / inspect / remove); docs/EMBED.md
+index.mjs, themes.mjs, themes.cjs, index.d.ts, package.json   вход для сборщиков и Node, типы (версия = Whisper.version)
 api.js                 Whisper API: приложения Whisper управляют друг другом (одна тема во все); работает и без ядра
 rust/whisper/          Rust архива и комнат: mod (ключ, альбомы), auth, upload, stream (wa://), rooms
 rust/discord.rs        Rust Discord (IPC, переподключение, лимиты)
@@ -43,8 +54,10 @@ rust/obs.rs, rust/obs/ Rust виджета OBS (сервер на 127.0.0.1) и 
 rust/api.rs            Rust Whisper API: сервер на 127.0.0.1, реестр запущенных приложений, клиент (без whisper_host)
 rust/whisper_host.example.rs   образец того, что приложение даёт Rust ядра
 rust/check/            сборка и тесты Rust ядра без приложения (своя заглушка whisper_host)
+rust/wmt/              крейт whisper-wmt: чтение .wmt на Rust без зависимостей (свой inflate и JSONC), тесты — cargo test
 docs/CORE.md           ядро целиком: события, сущности, провайдер, плеер, роли (словарь), модули, подключение
 docs/WMT-FORMAT.md     строгое описание формата .wmt
+docs/EMBED.md          ядро и темы в своём приложении — для независимых авторов
 docs/API.md            протокол Whisper API: реестр, запросы, действия (caps), подключение, пример из PowerShell
 .github/workflows/check.yml    CI: node --check, движок тем в Node, cargo test в rust/check (Windows)
 ```
@@ -57,9 +70,9 @@ docs/API.md            протокол Whisper API: реестр, запрос�
 - Взять свежее ядро в приложение: `git submodule update --remote src/core`, проверить, закоммитить.
 - После `git pull` приложения: `git submodule update --init`. Клонировать: `git clone --recurse-submodules`.
 - В CI приложения у `actions/checkout` — `with: { submodules: true }`.
-- **`rust/check` запускай только в отдельной копии whisper-core, не в `src/core`**: Tauri встраивает в программу
+- **`rust/check` и `rust/wmt` запускай только в отдельной копии whisper-core, не в `src/core`**: Tauri встраивает в программу
   всю папку `src`, и `rust/check/target` (гигабайты) попал бы в установщик.
-- Версия — `Whisper.version` (whisper-core.js) и `WhisperThemeCss.VERSION`. Меняется контракт — подними версию,
+- Версия — `Whisper.version` (whisper-core.js), `WhisperThemeCss.VERSION`, `WhisperEmbed.VERSION`, `package.json`, `rust/wmt/Cargo.toml` — одна. Меняется контракт — подними версию,
   опиши в docs/CORE.md и поставь тег (`git tag v0.2.0 && git push --tags`), чтобы было видно, с какой версии что поменялось.
 
 ## Подключение в приложение
@@ -138,6 +151,10 @@ mod whisper_host;   // своё: скопировать rust/whisper_host.exampl
   запись в `KIT_DEF` обязательно.
 - **Меню трека** `ui.trackMenu.add({ id, slot, build(track, m, ctx) })`; приложение зовёт `trackMenu.build(raw, ctx, slot)`
   в своём меню «⋯», `m` — из `kit.menu(raw, ctx)`.
+- **Хост** `Whisper.host` / `Whisper.setHost({ kind, invoke, listen, fileUrl, openUrl, attention })` — по умолчанию
+  `window.__TAURI__` (берётся при каждом вызове). Новая возможность бэкенда для модулей — новая функция хоста (и в docs/CORE.md).
+- **Карта tokens** `ui.tokens(map)` / `ui.tokenMap()` и `ui.coverage(roles)` — для приложений без своего theme.js
+  (`core/embed.js`). Whisper Yandex карту не объявляет: accent/effects там применяет `theme.js`.
 - **`Whisper` заморожен** (`Object.freeze`): новое — новыми полями в исходнике ядра, модули кладут свой API
   в `Whisper.modules.<имя>`.
 
@@ -172,6 +189,8 @@ mod whisper_host;   // своё: скопировать rust/whisper_host.exampl
   и без комментариев; нельзя `@import`, `url()` куда-либо кроме ресурсов темы/`data:`/`#якорей`, `image-set/element/
   paint/src(`, `expression(`, `javascript:`; `@keyframes/@font-face/@layer` темы получают префикс `wmt-<id>-`.
   Любое изменение `theme-css.js` — сравнить вывод со старой версией на настоящих темах (одинаковый до символа).
+- `tokensMapCss` / `themeCss({ tokenMap })` — только для приложений, которые сами попросили карту; без `tokenMap` вывод
+  `themeCss` прежний. Правила разбора `.wmt` меняются в ДВУХ местах: `wmt.js` и `rust/wmt` (сверить на настоящих темах).
 
 ## CSP и безопасность (у приложений Whisper одинаковые правила)
 

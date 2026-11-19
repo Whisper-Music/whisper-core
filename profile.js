@@ -12,7 +12,7 @@
   const W = window.Whisper;
   if (!W) return;
   const kit = W.ui.kit;
-  const { invoke } = window.__TAURI__.core;
+  const invoke = (c, a, o) => W.host.invoke(c, a, o);
   const toast = (...a) => kit.toast?.(...a);
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const SITE = "https://origin.whisper-archive.ru/profile/";
@@ -125,7 +125,7 @@
     catch (e) { toast("Не получилось: " + msg(e), 5000, { kind: "err" }); }
     paint();
   }
-  const openSite = () => { try { window.__TAURI__.opener.openUrl(SITE + encodeURIComponent(String(me.id))); } catch {} };
+  const openSite = () => { W.host.openUrl(SITE + encodeURIComponent(String(me.id))); };
 
   async function toggleAlbum(a) {
     const id = String(a.id);

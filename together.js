@@ -12,7 +12,7 @@
   const W = window.Whisper;
   if (!W) { console.error("together.js: нет ядра Whisper — подключи core/whisper-core.js раньше"); return; }
   const kit = W.ui.kit, P = W.player;
-  const { invoke } = window.__TAURI__.core;
+  const invoke = (c, a, o) => W.host.invoke(c, a, o);
   const showToast = (...a) => kit.toast(...a), modal = (o) => kit.confirm(o);
   const $t = (s, el = document) => el.querySelector(s);
   const roleEl = (r) => W.ui.all(r)[0] || null;
@@ -615,7 +615,7 @@
     }
     // окно свёрнуто или в фоне — мигнуть значком на панели задач
     if (!document.hasFocus()) {
-      try { window.__TAURI__?.window?.getCurrentWindow?.().requestUserAttention(2)?.catch?.(() => {}); } catch {}
+      W.host.attention();
     }
   }
   // поставить предложение сразу за текущим треком и убрать его из списка
@@ -830,7 +830,7 @@
     kit.notify?.({ kind: "invite", title: "Слушать вместе", body: `${who} зовёт тебя в комнату ${inv.code}` });
     // окно свёрнуто или в фоне — мигнуть значком на панели задач
     if (!document.hasFocus()) {
-      try { window.__TAURI__?.window?.getCurrentWindow?.().requestUserAttention(2)?.catch?.(() => {}); } catch {}
+      W.host.attention();
     }
   }
   async function declineInvite(inv) {
@@ -896,7 +896,7 @@
     refresh: () => loadFriends(true),
   };
 
-  window.__TAURI__.event?.listen("room-link", () => takeLink());
+  W.host.listen("room-link", () => takeLink()).catch(() => {});
   setTimeout(takeLink, 1200);        // приложение запустили по ссылке — окно и вход к этому времени готовы
   async function leave() {
     const c = code;
@@ -1259,7 +1259,7 @@
       // из приложения передаёт только (cmd, args), поэтому — напрямую в Tauri
       let r;
       try {
-        r = await window.__TAURI__.core.invoke("wa_room_theme_share", t.bytes, { headers: {
+        r = await W.host.invoke("wa_room_theme_share", t.bytes, { headers: {
           "x-room-code": code, "x-theme-name": encodeURIComponent(t.name || "Тема"), "x-theme-author": encodeURIComponent(t.author || ""),
         } });
       } catch (e) { throw e instanceof Error ? e : new Error(String(e)); }

@@ -13,7 +13,7 @@
   const W = window.Whisper;
   if (!W) { console.error("archive.js: нет ядра Whisper — подключи core/whisper-core.js раньше"); return; }
   const kit = W.ui.kit;
-  const { invoke } = window.__TAURI__.core;
+  const invoke = (c, a, o) => W.host.invoke(c, a, o);
   const CFG_KEY = "wa_cfg", IDX_KEY = "wa_index_v3";
   // старые списки: wa_index включал чужие публичные альбомы, wa_index_mine — только свои (без лайкнутых)
   try { localStorage.removeItem("wa_index"); localStorage.removeItem("wa_index_mine"); } catch {}
@@ -284,7 +284,7 @@
   }
   // Адрес потока по правилам Tauri: http://wa.localhost/… в Windows, wa://localhost/… в Linux и macOS.
   const STREAM_BASE = (() => {
-    try { return window.__TAURI__.core.convertFileSrc("", "wa").replace(/\/?$/, "/"); } catch { return "wa://localhost/"; }
+    try { return (W.host.fileUrl("", "wa") || "wa://localhost/").replace(/\/?$/, "/"); } catch { return "wa://localhost/"; }
   })();
 
   // ---------- источник звука для ядра ----------

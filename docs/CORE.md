@@ -421,9 +421,60 @@ Whisper.ui.define({
 | `lyrics` | текст песни | `#fLyrics` |
 | `lyrics.line` | строка текста | `#fLyrics .ln:not(.on)` |
 | `lyrics.line:active` | звучащая строка | `#fLyrics .ln.on` |
+| `header` | верхняя панель приложения (шапка сайта) | — |
+| `header.logo` | логотип/название в шапке | — |
+| `profile` | кнопка или блок своего профиля | — |
+| `avatar` | аватар (свой или собеседника) | — |
+| `input` | поле ввода (кроме поиска) | — |
+| `link` | ссылка в тексте | — |
+| `badge` | значок-счётчик (непрочитанные, новое) | — |
+| `list` | обычный список (не треки): чаты, друзья, результаты | — |
+| `list.item` | строка обычного списка | — |
+| `list.item:active` | выбранная строка списка | — |
+| `waveform` | форма волны трека (вместо или поверх полосы воспроизведения) | — |
+| `comment` | комментарий | — |
+| `chat` | окно переписки | — |
+| `chat.message` | сообщение | — |
+| `chat.message:own` | своё сообщение | — |
+| `chat.input` | поле ввода сообщения | — |
+
+Роли с «—» в Whisper Yandex не объявлены: они для приложений с другим устройством (обёртки над сайтами,
+мессенджеры, сторонние программы — docs/EMBED.md). Тема, которая на них опирается, в Whisper Yandex просто не
+применяет такие правила.
 
 Модулям роли тоже полезны: `Whisper.ui.all("search")` возвращает все поля поиска в любом приложении, а
 `Whisper.ui.has("player.extra")` говорит, есть ли такой элемент.
+
+**Насколько тема подходит приложению:** `Whisper.ui.coverage(WhisperThemeCss.rolesUsed(th, Whisper.app.id))` →
+`{ used, have, missing, ratio }` — какие роли тема использует, какие из них есть у приложения и доля (0…1; ролей нет — 1).
+Пригодится в списке тем: «подходит на 80%».
+
+**Карта tokens приложения:** `Whisper.ui.tokens({ "color.accent": "--my-accent", … })` / `Whisper.ui.tokenMap()` —
+куда ставить общие значения темы (раздел «Движок тем», `tokensMapCss`). Её берёт `core/embed.js`. Whisper Yandex карту
+не объявляет: accent и effects там — стартовые значения настроек, их применяет `theme.js`.
+
+---
+
+## Хост — связь модулей с бэкендом
+
+Модули ядра не обращаются к `window.__TAURI__` сами — только через `Whisper.host`:
+
+| Функция | Что делает | В Tauri |
+|---|---|---|
+| `host.invoke(cmd, args?, opts?)` → `Promise` | команда бэкенда | `__TAURI__.core.invoke` |
+| `host.listen(event, fn)` → `Promise<unlisten>` | событие бэкенда (`fn({ event, payload })`) | `__TAURI__.event.listen` |
+| `host.fileUrl(path, scheme)` | адрес своего протокола (поток архива — `wa`) | `convertFileSrc` |
+| `host.openUrl(url)` | открыть ссылку в браузере | `__TAURI__.opener.openUrl`, иначе `window.open` |
+| `host.attention()` | мигнуть окном (приглашение в комнату) | `requestUserAttention(2)` |
+| `host.has(name)`, `host.kind()` | есть ли функция; `"tauri"`, своё имя или `""` | |
+
+В приложении на Tauri (и в его браузерной версии через `webshim.js`) делать ничего не нужно: хост по умолчанию берёт
+`window.__TAURI__` при каждом вызове. Приложение на другой основе — `Whisper.setHost({ kind, invoke, listen, fileUrl,
+openUrl, attention })` (любые из функций; `setHost(null)` — снова Tauri). Чего хост не дал, модуль не делает:
+`invoke` — отказ с понятной ошибкой, `listen` — пустая отписка. Событие `host` — хост сменился.
+`core/api.js` работает и без ядра: тогда он сам берёт `window.__TAURI__`.
+
+Новый модуль ядра — тоже только через `Whisper.host`, без `window.__TAURI__`.
 
 ---
 
@@ -676,6 +727,7 @@ const { css, urls } = WhisperThemeCss.themeCss(th, "chalk", "whisper-vk", {
   core: "whisper-core",            // имя общей секции ролей
   resolve: (sel) => …,             // роли → селекторы; по умолчанию Whisper.ui.resolve (если ядро подключено)
   mutedIn: ":is(.card, .list)",    // блоки, где приложение само переопределяет --muted: цвет темы там тоже главнее
+  tokenMap: { "color.accent": "--vk-accent" },   // все tokens по карте (tokensMapCss); нет — только общая часть (tokensCss)
 });
 document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheetFrom(css)];   // или свой способ подключения
 // когда тема больше не нужна: urls.forEach(URL.revokeObjectURL)
@@ -690,7 +742,10 @@ const obs = WhisperThemeCss.obsCss(th);                              // { css, s
 | `scopeCss(css, id, allowed?, { resolve }?)` | правила темы → правила стиля `id` (`:root[data-style="id"] …`); `allowed` — адреса, которые можно оставить в `url()` |
 | `cssSafe(text, allowed)` | можно ли оставить кусок CSS (после раскрытия `\`-экранирования, без комментариев) |
 | `extractFrom(css, style)` | обратная операция: правила встроенного стиля из CSS приложения уже без привязки («Сохранить стиль в файл») |
-| `tokensCss(tokens, { mutedIn }?)` | CSS из `tokens`: `--text`, `--muted`, `--font-display`, шрифт и фон `body` |
+| `tokensCss(tokens, { mutedIn }?)` | CSS из `tokens`: `--text`, `--muted`, `--font-display`, шрифт и фон `body` (accent и effects применяет приложение) |
+| `tokensMapCss(tokens, map?, { mutedIn }?)` | CSS из ВСЕХ `tokens` по карте приложения: `{ "color.accent": "--x" \| ["--x", ".a { color }"] }`; `map` нет или `true` — `TOKEN_MAP` (переменные Whisper) |
+| `TOKENS`, `TOKEN_MAP`, `tokenVal(tokens, key)` | какие токены есть и как проверяются; карта по умолчанию; проверенное значение одного токена |
+| `rolesUsed(th, app?)` | роли `[data-w]`, которые тема использует (общая секция и секция `app`), по алфавиту |
 | `cssVal(v)` | значение из чужого файла, которое можно подставить в CSS, или `""` |
 | `withAssets(css, th, make)` | `url(asset:имя)` → `url("<make(ресурс)>")`, пустой адрес → `none` |
 | `obsCss(th)` | секция виджета OBS: ресурсы — `data:` (до 1,5 МБ), всё, что ведёт наружу, вырезано |
@@ -707,6 +762,18 @@ const obs = WhisperThemeCss.obsCss(th);                              // { css, s
 
 Соглашения для приложения: выбранный стиль — атрибут `data-style` на `<html>`, анимации — `data-anim="on|off"` там же;
 свои слои и анимации не называть с `wmt-`.
+
+**Приложению без своего `theme.js`** всё это делает `core/embed.js` одним вызовом: `WhisperEmbed.applyTheme(bytes, { app,
+map })` — открыть, собрать CSS с картой tokens, подключить через `adoptedStyleSheets`, поставить `data-style`; `inspect` —
+что в теме и насколько она подходит; `remove` — снять. Подробно — `docs/EMBED.md`.
+
+**Сборщики и Node:** `package.json` ядра — `import { Whisper, WhisperEmbed } from "whisper-core"` (index.mjs, нужен
+браузер) и `"whisper-core/themes"` (только `WMT` и `WhisperThemeCss`, без DOM; есть и `require`). Файлы `wmt.js`,
+`theme-css.js`, `embed.js` кладут себя и в `globalThis`, и в `module.exports`. Типы — `index.d.ts`.
+
+**Rust:** крейт `rust/wmt` (`whisper-wmt`, без зависимостей) читает `.wmt` по тем же правилам и лимитам, что `wmt.js`:
+`open`, `tokens()` (проверенные значения), `rgba()` для нативного интерфейса, `background()`, `asset()`, `settings()`,
+`css()`, `roles_used()`. Для программ на Rust с нативным интерфейсом и для своих Rust-частей приложений.
 
 ---
 
@@ -757,4 +824,9 @@ const obs = WhisperThemeCss.obsCss(th);                              // { css, s
 * ~~разделить `whisper.rs` на общую часть (архив, комнаты) и часть Яндекса~~ — сделано: `src-tauri/src/whisper/` + `whisper_yandex.rs`;
 * ~~вынести `src/core` в отдельный репозиторий~~ — сделано: whisper-core, подмодуль в `src/core` у каждого приложения;
 * ~~Discord и виджет OBS — в ядро~~ — сделано: `core/discord.js`, `core/obs.js`, `rust/discord.rs`, `rust/obs.rs`;
-* статистика прослушиваний — в ядро.
+* статистика прослушиваний — в ядро;
+* ~~ядро для сторонних приложений~~ — сделано (0.2.0): `Whisper.host` вместо `window.__TAURI__` в модулях, все tokens по карте
+  приложения (`tokensMapCss`, `Whisper.ui.tokens`), `core/embed.js`, роли не только для плеера и `ui.coverage`,
+  `package.json` + `index.mjs` + `index.d.ts`, Rust-крейт `rust/wmt` (docs/EMBED.md);
+* Rust ядра (`rust/whisper/`, `discord.rs`, `obs.rs`, `api.rs`) — разделить на крейт без Tauri (логика: архив, комнаты, API,
+  Discord) и тонкий слой `#[tauri::command]`, чтобы его подключали через Cargo, а не через `#[path]`.

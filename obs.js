@@ -22,7 +22,7 @@
     }
   } catch {}
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch {} };
-  const call = (cmd, args) => Promise.resolve(window.__TAURI__.core.invoke(cmd, args));
+  const call = (cmd, args) => W.host.invoke(cmd, args);
   const $o = (id) => document.getElementById(id);
   let port = 0, key = "", last = "", lastTheme = "";
 
