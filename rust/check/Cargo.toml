@@ -7,6 +7,7 @@ name = "whisper-core-check"
 version = "0.0.0"
 edition = "2021"
 publish = false
+build = "build.rs"         # Windows: манифест Common Controls v6 в тестовый exe (иначе STATUS_ENTRYPOINT_NOT_FOUND)
 
 [lib]
 path = "src/lib.rs"
