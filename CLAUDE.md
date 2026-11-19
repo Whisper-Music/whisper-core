@@ -36,13 +36,16 @@ archive.js/.css        Whisper Archive: источник звука «archive»,
 together.js/.css       «Слушать вместе»: комнаты на сервере архива
 discord.js/.css        Discord Rich Presence
 obs.js/.css            виджет «Сейчас играет» для OBS
+api.js                 Whisper API: приложения Whisper управляют друг другом (одна тема во все); работает и без ядра
 rust/whisper/          Rust архива и комнат: mod (ключ, альбомы), auth, upload, stream (wa://), rooms
 rust/discord.rs        Rust Discord (IPC, переподключение, лимиты)
 rust/obs.rs, rust/obs/ Rust виджета OBS (сервер на 127.0.0.1) и его страница widget.html / widget.js
+rust/api.rs            Rust Whisper API: сервер на 127.0.0.1, реестр запущенных приложений, клиент (без whisper_host)
 rust/whisper_host.example.rs   образец того, что приложение даёт Rust ядра
 rust/check/            сборка и тесты Rust ядра без приложения (своя заглушка whisper_host)
 docs/CORE.md           ядро целиком: события, сущности, провайдер, плеер, роли (словарь), модули, подключение
 docs/WMT-FORMAT.md     строгое описание формата .wmt
+docs/API.md            протокол Whisper API: реестр, запросы, действия (caps), подключение, пример из PowerShell
 .github/workflows/check.yml    CI: node --check, движок тем в Node, cargo test в rust/check (Windows)
 ```
 
@@ -71,7 +74,7 @@ docs/WMT-FORMAT.md     строгое описание формата .wmt
    `registerProvider`, `player.bind`, `queue.bind`, `ui.provide`. Привязка — **до** движка тем: темы при запуске уже
    должны знать роли.
 5. `core/wmt.js`, `core/theme-css.js` — перед движком тем приложения.
-6. Модули: `core/archive.js`, `core/queue.js`, `core/discord.js`, `core/obs.js`, `core/together.js`
+6. Модули: `core/archive.js`, `core/queue.js`, `core/discord.js`, `core/obs.js`, `core/api.js`, `core/together.js`
    (порядок, в котором модули ставят карточки настроек, = порядок подключения).
 
 ### Rust (src-tauri/src/lib.rs)
@@ -147,6 +150,7 @@ mod whisper_host;   // своё: скопировать rust/whisper_host.exampl
 | together | `player.extra` / `player.actions`, `player.info`, `player.seek`… | `menu, toast, confirm` | `whisper/rooms.rs`, deeplink `whisper://room/…` | — |
 | discord | — | `settingsCard` | `discord.rs` | `<storage>discord` |
 | obs | — | `settingsCard, accentColors, obsTheme, rangeFill, toast` | `obs.rs` + `rust/obs/` | `<storage>obs` |
+| api | — | `themeImport, themeExport, settingsCard, toast` | `api.rs` (команды `wapi_*`, `api::shutdown()` при выходе) | `<storage>api` |
 
 Модули сами ставят свои карточки настроек (`kit.settingsCard(card, { section, first, colbreak })`), сами строят
 разметку окон и пользуются общими классами `.panel .login.modal .login-box .modalbox .field .nav .row .status
@@ -198,4 +202,8 @@ mod whisper_host;   // своё: скопировать rust/whisper_host.exampl
 - Трек, восстановленный с прошлого запуска, — тот же `id`: события `track` нет, бери состояние через `{ replay: true }`.
 - «Слушать вместе»: сервер хранит поля трека, а не адрес в сервисе — в одной комнате клиенты одного сервиса.
 - Виджет OBS берёт порт из 47821–47826: два приложения Whisper одновременно получат разные порты.
+- Whisper API (`api.js`/`api.rs`): порт выдаёт система, найти приложение можно только через реестр (docs/API.md).
+  Новое действие — обработчик `WhisperApi.handle("POST имя", fn)` на странице, Rust не меняется. Обработчик решает,
+  что можно сделать снаружи: всё, что приходит, — чужие данные (тема — через `kit.themeImport` с фильтром cssSafe).
+  `api.js` не требует ядра (Whisper Mixer подключает его отдельно) — не добавляй в него `if (!W) return` сверху.
 - Имена команд Rust, ключи хранилища и `window.*`-имена — часть контракта с приложениями: менять только вместе с ними.

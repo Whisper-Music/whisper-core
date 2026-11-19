@@ -9,6 +9,8 @@ mod whisper;
 mod discord;
 #[path = "../../obs.rs"]
 mod obs;
+#[path = "../../api.rs"]
+mod api;
 
 mod whisper_host {
     use std::sync::Mutex;
@@ -69,4 +71,8 @@ pub async fn api_surface(req: tauri::http::Request<Vec<u8>>) {
     let _ = whisper::friends::wa_image("avatar".into(), "x".into(), None).await;
     obs::obs_state(serde_json::json!({ "cover": "https://evil.com/x" }));
     let _ = discord::discord_status();
+    api::wapi_stop();
+    api::shutdown();
+    let _ = api::wapi_apps().await;
+    let _ = api::wapi_body(1);
 }

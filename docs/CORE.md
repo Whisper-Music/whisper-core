@@ -645,6 +645,23 @@ Discord сам находит запущенный клиент и перепо�
   Порты 47821–47826: если первый занят (например, второе приложение Whisper), берётся следующий.
 * **Хранилище:** `<storage>obs` (у Whisper Yandex — `ym_obs`).
 
+### `core/api.js` — Whisper API (приложения управляют друг другом)
+
+Локальная API на `127.0.0.1`: каждое запущенное приложение записывается в общий реестр, другие программы Whisper
+(микшер, второй клиент) и скрипты системы находят его там и вызывают его действия — сейчас это темы: «поставь эту
+тему», «отдай текущую». Протокол, реестр и пример из PowerShell — `docs/API.md`. Модуль работает и без ядра
+(Whisper Mixer): `window.WhisperApi`, с ядром — ещё и `Whisper.modules.api`.
+
+Что нужно от приложения:
+
+* **Набор интерфейса:** `themeImport` (→ действие `POST theme`), `themeExport` (→ `GET theme`, `GET theme/file`
+  и кнопка «Стиль — во все приложения»), `settingsCard` (карточка «Приложения Whisper», раздел `look`), `toast`.
+  Нет `themeImport` — приложение просто не объявляет, что принимает темы.
+* **Rust:** `rust/api.rs` (`#[cfg(desktop)]`), команды `wapi_start`, `wapi_stop`, `wapi_body`, `wapi_reply`,
+  `wapi_apps`, `wapi_send`, `wapi_fetch`; окну — `core:event:allow-listen`; в `RunEvent::Exit` — `api::shutdown()`.
+  От `whisper_host` не зависит.
+* **Хранилище:** `<storage>api` (`off` — выключатель «Связь с приложениями Whisper» выключен).
+
 ## Движок тем: `core/wmt.js` + `core/theme-css.js`
 
 Оба файла — чистые модули без DOM и без зависимостей от приложения (работают в браузере и в Node 18+).
