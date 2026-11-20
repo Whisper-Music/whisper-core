@@ -267,7 +267,9 @@
     const wrap = el("div", "friends wpro");
     if (hasKey === false) {
       const p = el("div", "frempty");
-      p.append(el("p", "", "Профиль живёт в Whisper Archive: войди в архив, чтобы видеть свои альбомы, лайки и друзей, менять ник и аватар."));
+      const lead = el("p", "", "Профиль — в Whisper Archive");
+      lead.title = "Войди в архив, чтобы видеть свои альбомы, лайки и друзей, менять ник и аватар";
+      p.append(lead);
       const login = W.modules.archive?.login;
       if (typeof login === "function") p.append(btn("Войти в Whisper Archive", "active", async () => { await login("Чтобы открыть профиль"); await load(); paint(); }));
       wrap.append(p);
@@ -288,7 +290,7 @@
       wrap.append(tabs);
       const sec = el("section", "frsec");
       if (prof?.error && tab !== "friends") sec.append(el("p", "frnote err", "Не удалось загрузить альбомы: " + prof.error));
-      if (tab === "albums") { if (albums.length) albumGrid(sec, albums, false); else if (!prof?.error) sec.append(el("p", "frempty", "Своих альбомов пока нет — их можно загрузить в архив из меню трека или на сайте.")); }
+      if (tab === "albums") { if (albums.length) albumGrid(sec, albums, false); else if (!prof?.error) { const e = el("p", "frempty", "Своих альбомов пока нет"); e.title = "Загрузить в архив можно из меню трека или на сайте"; sec.append(e); } }
       else if (tab === "liked") { if (liked.length) albumGrid(sec, liked, true); else if (!prof?.error) sec.append(el("p", "frempty", "Лайкнутых альбомов пока нет.")); }
       else friendsTab(sec);
       wrap.append(sec);

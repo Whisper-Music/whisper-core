@@ -228,7 +228,9 @@
   function paintList(box) {
     if (hasKey === false) {
       const p = el("div", "frempty");
-      p.append(el("p", "", "Друзья живут в Whisper Archive: войди в архив, чтобы добавлять людей, видеть их альбомы и звать слушать вместе."));
+      const lead = el("p", "", "Друзья — через Whisper Archive");
+      lead.title = "Войди в архив, чтобы добавлять людей, видеть их альбомы и звать слушать вместе";
+      p.append(lead);
       const login = W.modules.archive?.login;
       if (typeof login === "function") p.append(btn("Войти в Whisper Archive", "active", async () => { await login("Чтобы добавлять друзей"); await load(true); paint(); }));
       box.append(p);
@@ -255,11 +257,14 @@
     const rk = (u) => (away(u) ? 1 : u.online ? 0 : 2);
     const fr = [...data.friends].sort((a, b) => rk(a) - rk(b));
     section(box, data.friends.length ? `Друзья · ${data.friends.length}` : "Друзья", fr, "friend", (u) => ({ online: !!u.online }));
-    if (!data.friends.length && !loadErr) box.append(el("p", "frempty", "Пока никого. Найди друга по никнейму — он увидит заявку в приложении или в профиле на сайте."));
+    if (!data.friends.length && !loadErr) {
+      const e = el("p", "frempty", "Пока никого");
+      e.title = "Найди друга по никнейму — он увидит заявку в приложении или на сайте";
+      box.append(e);
+    }
     section(box, "Ждут ответа", data.outgoing, "sent");
     section(box, "Слушали вместе", recent, "none", (u) => ({ online: !!u.online }));
     section(box, `Заблокированные · ${data.blocked.length}`, data.blocked, "blocked", () => ({ open: false }));
-    box.append(el("p", "frnote", "Твоих друзей видишь только ты. Друзья видят твой ник, аватар и публичные альбомы."));
   }
 
   // ---------- профиль друга ----------

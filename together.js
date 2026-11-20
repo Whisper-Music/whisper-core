@@ -1159,10 +1159,14 @@
     try { hasKey = await invoke("wa_token_exists"); } catch {}
     if (!panel || panel.box !== box || g !== setupGen || inRoom()) return;
     box.textContent = "";
-    box.append(el("h2", "", "Слушать вместе"));
-    box.append(el("p", "rmlead", `Одна и та же музыка у всех в комнате в один и тот же момент. Каждый слушает со своего ${account()}, ведущий управляет, остальные могут предлагать треки.`));
+    // пояснения — в подсказках при наведении, на экране только суть
+    const h2 = el("h2", "", "Слушать вместе");
+    h2.title = `Одна и та же музыка у всех в комнате. Каждый слушает со своего ${account()}, ведущий управляет, остальные предлагают треки`;
+    box.append(h2);
     if (!hasKey) {
-      box.append(el("p", "rmwarn", "Комнаты работают через Whisper Archive. Войди в архив: Настройки → «Для разработчиков» → Whisper Archive — у всех участников."));
+      const w = el("p", "rmwarn", "Нужен вход в Whisper Archive");
+      w.title = "Настройки → «Для разработчиков» → Whisper Archive — у всех участников";
+      box.append(w);
     }
     const mk = el("button", "nav active rmcreate", "Создать комнату");
     mk.type = "button"; mk.disabled = !hasKey; mk.onclick = create;
@@ -1206,7 +1210,9 @@
     const sec = el("div", "rmfriends");
     // в закрытую комнату звать может только ведущий (гостю сервер ответит 403)
     const noInvite = inRoom() && !!room.locked && !isHost();
-    sec.append(el("small", "", noInvite ? "Вход закрыт — звать друзей может только ведущий" : inRoom() ? "Позвать друзей" : "Друзья и те, с кем ты уже слушал вместе"));
+    const lab = el("small", "", noInvite ? "Звать может только ведущий" : inRoom() ? "Позвать друзей" : "Друзья");
+    lab.title = noInvite ? "Вход в комнату закрыт" : "Друзья и те, с кем ты уже слушал вместе";
+    sec.append(lab);
     const ul = el("div", "rmflist");
     // в сети — сверху, отошёл — следом, уже в комнате — внизу
     const rank = (f) => (friendStatus(f) === "here" ? 3 : f.presence === "away" ? 1 : f.online ? 0 : 2);
@@ -1304,11 +1310,11 @@
     const can = typeof kit.themeExport === "function";
     const sh = el("button", "nav active rmthshare", themeBusy === "share" ? "Отправляется…" : "Поделиться моей темой");
     sh.type = "button"; sh.disabled = !can || !!themeBusy;
-    sh.title = "Твой текущий стиль оформления (как «Сохранить в файл…») — остальные смогут поставить его себе";
+    sh.title = "Твой текущий стиль — остальные смогут поставить его себе. Темы живут, пока открыта комната; установленная остаётся";
     sh.onclick = shareTheme;
     side.append(sh);
     const ul = el("div", "rmpeople rmthlist");
-    if (!list.length) ul.append(el("p", "rmempty", "Пока никто не делился темой. Поделись своей — остальные поставят её одной кнопкой."));
+    if (!list.length) ul.append(el("p", "rmempty", "Тем пока нет"));
     for (const th of list) {
       const row = el("div", "rmtheme");
       const tx = el("div", "rmthtx");
@@ -1330,7 +1336,6 @@
       ul.append(row);
     }
     side.append(ul);
-    side.append(el("small", "rmhint", "Темы хранятся, пока открыта комната. Установленная тема остаётся у тебя."));
   }
   // приглашения тебе (окно до комнаты): «Войти» — как по ссылке, «✕» — отклонить
   function invitesBlock(box) {
@@ -1376,10 +1381,10 @@
     // ведущий: закрыть вход — по коду и ссылке больше не войти, только по твоему приглашению
     if (isHost()) {
       const ll = el("label", "switch rmauto rmlock");
-      ll.title = "Уже вошедшие остаются. Новые войдут, только если ты позовёшь их сам (приглашение живёт 10 минут)";
+      ll.title = "Новые войдут только по твоему приглашению (живёт 10 минут). Уже вошедшие остаются";
       const cl = el("input"); cl.type = "checkbox"; cl.checked = !!room.locked; cl.disabled = lockBusy;
       cl.onchange = () => setLocked(cl.checked);
-      ll.append(cl, el("i"), el("span", "", "Закрыть вход — только по приглашению"));
+      ll.append(cl, el("i"), el("span", "", "Закрыть вход"));
       box.append(ll);
     }
     friendsBlock(box);
@@ -1421,7 +1426,7 @@
         ? "Если у гостя трека нет на его площадке, файл передаётся ему через сервер Whisper Archive. Он хранится, только пока открыта комната"
         : "Нужен вход в Whisper Archive";
       const cs = el("input"); cs.type = "checkbox"; cs.checked = shareOn && can; cs.disabled = !can; cs.onchange = () => setShareOn(cs.checked);
-      ls.append(cs, el("i"), el("span", "", "Делиться треками, которых нет у гостей"));
+      ls.append(cs, el("i"), el("span", "", "Делиться недостающими треками"));
       box.append(ls);
       if (shareOn && can && canSave() && canCache()) {
         const lv2 = el("label", "switch rmauto rmsub");
@@ -1437,12 +1442,16 @@
           : `Нет на площадке у: ${who}` + (shareBusy === cur ? " — трек передаётся…" : "")));
       }
     } else if (guestFor?.missing && room.playback && guestFor.key === pbKey(room.playback.track)) {
-      box.append(el("p", "rmwarn", "Этого трека нет на твоей площадке. Он заиграет, если ведущий поделится им через архив."));
+      const w = el("p", "rmwarn", "Этого трека нет на твоей площадке");
+      w.title = "Он заиграет, если ведущий поделится им через архив";
+      box.append(w);
     }
     // предложения
     const sg = room.suggestions || [];
     const sb = el("div", "rmsugs");
-    sb.append(el("small", "", isHost() ? (sg.length ? "Предлагают" : "Предложений пока нет — гости предлагают треки через «⋯»") : (sg.length ? "Твои предложения" : "Предложить трек: «⋯» у трека → «Предложить в комнату»")));
+    const sl = el("small", "", isHost() ? (sg.length ? "Предлагают" : "Предложений пока нет") : (sg.length ? "Твои предложения" : "Предложений нет"));
+    sl.title = isHost() ? "Гости предлагают треки через «⋯»" : "Предложить трек: «⋯» у трека → «Предложить в комнату»";
+    sb.append(sl);
     for (const s of sg) {
       const row = el("div", "rmsug" + (taken.has(s.id) ? " taken" : ""));
       row.append(trackLine(s.track));
@@ -1508,7 +1517,9 @@
     let picker = !m.isMe && id != null && winkFor === key ? winkPicker(key) : null;
     if (canKick && kickFor === key) {
       const cf = el("div", "rmconfirm rmkick");
-      cf.append(el("span", "", `Убрать ${name}? Пропадут его предложения и темы, а войти снова он не сможет, пока ты его не вернёшь.`));
+      const q = el("span", "", `Убрать ${name} из комнаты?`);
+      q.title = "Пропадут его предложения и темы; войти снова он не сможет, пока ты его не вернёшь";
+      cf.append(q);
       const yes = el("button", "nav danger", "Убрать"); yes.type = "button"; yes.onclick = (e) => { e.stopPropagation(); kick(m); };
       const no = el("button", "nav", "Отмена"); no.type = "button"; no.onclick = (e) => { e.stopPropagation(); kickFor = null; paint(); };
       const r2 = el("div", "rmconfirmbtns"); r2.append(no, yes); cf.append(r2);
@@ -1538,7 +1549,7 @@
     }
     ul.append(el("small", "rmgroup", rest.length ? `Слушатели · ${rest.length}` : "Слушателей пока нет"));
     for (const m of rest) put(personRow(m));
-    if (!rest.length) ul.append(el("p", "rmempty", "Отправь друзьям код или ссылку-приглашение — они появятся здесь."));
+    if (!rest.length) { const e = el("p", "rmempty", "Пока никого"); e.title = "Отправь друзьям код или ссылку-приглашение"; ul.append(e); }
     // ведущий: кого убрал — их можно вернуть
     const bans = bannedList();
     if (bans.length) {
@@ -1554,11 +1565,14 @@
       }
     }
     side.append(ul);
-    if (isHost() && !target && rest.some((m) => !m.isMe && memberId(m) != null)) side.append(el("small", "rmhint", "Нажми на слушателя, чтобы передать ему корону — управление музыкой. «⛔» — убрать из комнаты"));
-    if (!isHost()) side.append(el("small", "rmhint", "Музыкой управляет ведущий с короной. Предложить трек — «⋯» у трека, попросить переключить — «😉»"));
+    // как управлять — подсказкой на заголовке «Участники», не текстом под списком
+    head.title = isHost() ? "Нажми на слушателя, чтобы передать ему управление. «⛔» — убрать из комнаты"
+      : "Музыкой управляет ведущий с короной. Предложить трек — «⋯» у трека, попросить переключить — «😉»";
     if (target) {
       const cf = el("div", "rmconfirm");
-      cf.append(el("span", "", `Передать управление ${target.nickname}? Комната и код останутся, ты станешь слушателем.`));
+      const q = el("span", "", `Передать управление ${target.nickname}?`);
+      q.title = "Комната и код останутся, ты станешь слушателем";
+      cf.append(q);
       const yes = el("button", "nav active", "Передать"); yes.type = "button"; yes.onclick = () => transfer(target);
       const no = el("button", "nav", "Отмена"); no.type = "button"; no.onclick = () => { confirmFor = null; paint(); };
       const r2 = el("div", "rmconfirmbtns"); r2.append(no, yes); cf.append(r2);
