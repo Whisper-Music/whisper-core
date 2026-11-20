@@ -1,4 +1,5 @@
-# Проверка ядра без приложения: синтаксис JS, движок тем в Node, сборка и тесты общей части Whisper Archive (rust/check).
+# Проверка ядра без приложения: синтаксис JS, движок тем в Node, крейт тем rust/wmt, сборка и тесты общей части
+# Whisper Archive (rust/check).
 name: check
 on:
   push:
@@ -30,6 +31,29 @@ jobs:
           })();
           JS
           node /tmp/t.cjs
+      - name: Темы в чужом приложении (карта tokens, роли, embed.js) и вход для сборщиков
+        run: |
+          cat > /tmp/e.cjs <<'JS'
+          const TC = require(process.cwd() + "/theme-css.js"), WMT = require(process.cwd() + "/wmt.js");
+          (async () => {
+            const th = await WMT.open('#WMT 1\n@@ manifest\n{"id":"t","name":"T"}\n@@ tokens\n{"color":{"accent":"#AABBCC","text":"red;}"},"effects":{"glow":99}}\n@@ css whisper-core\n[data-w="player"] { a: b }\n');
+            const css = TC.tokensMapCss(th.tokens, { "color.accent": ["--brand", ".hdr { border-color }"], "color.text": "--t", "effects.glow": "--g" });
+            const want = ":root { --brand: #aabbcc; --g: 48px; }\n.hdr { border-color: #aabbcc; }\n";
+            if (css !== want) { console.error(JSON.stringify(css)); process.exit(1); }
+            if (TC.rolesUsed(th).join() !== "player") process.exit(1);
+            console.log("ok:", css.trim().replace(/\n/g, " | "));
+          })();
+          JS
+          node /tmp/e.cjs
+          node --input-type=module -e 'const m = await import(process.cwd() + "/themes.mjs"); if (typeof m.WMT.open !== "function") process.exit(1); console.log("themes.mjs ok")'
+
+  wmt:
+    runs-on: ubuntu-22.04            # крейт без зависимостей — собирается где угодно
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+        working-directory: rust/wmt
 
   rust:
     runs-on: windows-latest          # Tauri на Windows собирается без системных библиотек
